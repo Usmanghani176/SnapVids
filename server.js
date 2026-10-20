@@ -68,7 +68,7 @@ async function ensureYtDlp() {
 
   const downloadUrl = process.platform === 'win32'
     ? 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe'
-    : 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp';
+    : 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux';
 
   console.log('Downloading yt-dlp engine...');
   binaryDownloadPromise = downloadFile(downloadUrl, YT_DLP_PATH)
