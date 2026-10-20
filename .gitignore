@@ -1,0 +1,5 @@
+node_modules/
+bin/
+temp_downloads/
+.env
+*.log
