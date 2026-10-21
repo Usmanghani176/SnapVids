@@ -14,9 +14,10 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const BIN_DIR = path.join(__dirname, 'bin');
+const BASE_WRITABLE_DIR = process.env.VERCEL ? '/tmp' : __dirname;
+const BIN_DIR = path.join(BASE_WRITABLE_DIR, 'bin');
 const YT_DLP_PATH = path.join(BIN_DIR, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
-const TEMP_DIR = path.join(__dirname, 'temp_downloads');
+const TEMP_DIR = path.join(BASE_WRITABLE_DIR, 'temp_downloads');
 
 if (!fs.existsSync(BIN_DIR)) fs.mkdirSync(BIN_DIR, { recursive: true });
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
@@ -445,6 +446,10 @@ app.get('/api/file/:jobId', (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running at http://localhost:${PORT}`);
-});
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`Server is running at http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;
