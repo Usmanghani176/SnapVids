@@ -265,6 +265,9 @@ function renderResult(data, originalUrl) {
         type: opt.type,
         title: data.title,
         label: opt.label,
+        ext: opt.ext,
+        directUrl: opt.directUrl || null,
+        isServerless: !!data.isServerless,
         clickedBtn: btn
       });
     });
@@ -276,7 +279,7 @@ function renderResult(data, originalUrl) {
   resultCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-async function startTrackedDownload({ url, format, type, title, label, clickedBtn }) {
+async function startTrackedDownload({ url, format, type, title, label, ext, directUrl, isServerless, clickedBtn }) {
   hideAlert();
   if (activePollTimer) {
     clearInterval(activePollTimer);
@@ -293,7 +296,6 @@ async function startTrackedDownload({ url, format, type, title, label, clickedBt
   const clickedLabel = clickedBtn.querySelector('.dl-btn-label');
   if (clickedLabel) clickedLabel.textContent = '0%...';
 
-  // Reset and show progress bar UI
   progressSpinner.classList.remove('hidden');
   downloadProgressNote.classList.remove('hidden');
   downloadProgressBar.style.width = '2%';
@@ -302,6 +304,70 @@ async function startTrackedDownload({ url, format, type, title, label, clickedBt
   downloadSizeInfo.textContent = 'Connecting to media stream...';
   downloadSpeedInfo.textContent = '';
   downloadProgressNote.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  // On Vercel serverless (stateless across HTTP requests) or direct CDN stream, download in a single request
+  if (isServerless || directUrl) {
+    try {
+      const targetEndpoint = directUrl
+        ? `/api/proxy-download?directUrl=${encodeURIComponent(directUrl)}&title=${encodeURIComponent(title)}&ext=${encodeURIComponent(ext || 'mp4')}`
+        : `/api/download?url=${encodeURIComponent(url)}&format=${encodeURIComponent(format)}&type=${encodeURIComponent(type)}&title=${encodeURIComponent(title)}`;
+
+      let fakePct = 5;
+      activePollTimer = setInterval(() => {
+        if (fakePct < 92) {
+          fakePct += Math.max(1, Math.round((95 - fakePct) * 0.12));
+          downloadProgressBar.style.width = `${fakePct}%`;
+          downloadPercentBadge.textContent = `${fakePct}%`;
+          downloadProgressText.textContent = `Downloading & Processing ${label}... ${fakePct}%`;
+          if (clickedLabel) clickedLabel.textContent = `${fakePct}%`;
+          document.title = `(${fakePct}%) Downloading — SnagVids`;
+        }
+      }, 450);
+
+      const response = await fetch(targetEndpoint);
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(errText || 'Failed to download media.');
+      }
+
+      const blob = await response.blob();
+      clearInterval(activePollTimer);
+      activePollTimer = null;
+      document.title = defaultPageTitle;
+
+      downloadProgressBar.style.width = '100%';
+      downloadPercentBadge.textContent = '100%';
+      progressSpinner.classList.add('hidden');
+      downloadProgressText.textContent = '✅ 100% Complete! File sent to Chrome Downloads.';
+      downloadSizeInfo.textContent = `Size: ${formatBytes(blob.size)}`;
+      downloadSpeedInfo.textContent = 'Saved to your Downloads folder';
+
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      const safeName = (title || 'video').replace(/[<>:"/\\|?*]/g, '').trim().slice(0, 90) || 'video';
+      a.download = `${safeName}.${type === 'audio' ? 'm4a' : (ext || 'mp4')}`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        URL.revokeObjectURL(blobUrl);
+        a.remove();
+      }, 5000);
+    } catch (err) {
+      if (activePollTimer) clearInterval(activePollTimer);
+      activePollTimer = null;
+      document.title = defaultPageTitle;
+      downloadProgressNote.classList.add('hidden');
+      showAlert(err.message || 'Download failed.');
+    } finally {
+      allBtns.forEach(b => {
+        b.disabled = false;
+        const lbl = b.querySelector('.dl-btn-label');
+        if (lbl) lbl.textContent = 'Download';
+      });
+    }
+    return;
+  }
 
   try {
     const startRes = await fetch('/api/start-download', {
