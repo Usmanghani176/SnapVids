@@ -231,8 +231,18 @@ async function fetchCloudMediaInfo(url, platform) {
       const res = await fetchJson(apiUrl);
       if (res && res.code === 0 && res.data) {
         const d = res.data;
+        const resolveTikUrl = (u) => {
+          if (!u || typeof u !== 'string') return null;
+          if (u.startsWith('http://') || u.startsWith('https://')) return u;
+          return `https://www.tikwm.com${u.startsWith('/') ? '' : '/'}${u}`;
+        };
+        const hdUrl = resolveTikUrl(d.hdplay);
+        const sdUrl = resolveTikUrl(d.play || d.wmplay);
+        const musicUrl = resolveTikUrl(d.music);
+        const coverUrl = resolveTikUrl(d.cover || d.origin_cover);
+
         const options = [];
-        if (d.hdplay) {
+        if (hdUrl) {
           options.push({
             id: 'direct_hd',
             label: 'Best Quality (HD No Watermark)',
@@ -241,10 +251,10 @@ async function fetchCloudMediaInfo(url, platform) {
             type: 'video',
             filesize: d.hd_size || d.size || null,
             badge: 'HD',
-            directUrl: d.hdplay
+            directUrl: hdUrl
           });
         }
-        if (d.play) {
+        if (sdUrl) {
           options.push({
             id: 'direct_sd',
             label: 'Standard Video (No Watermark)',
@@ -253,10 +263,10 @@ async function fetchCloudMediaInfo(url, platform) {
             type: 'video',
             filesize: d.size || null,
             badge: 'MP4',
-            directUrl: d.play
+            directUrl: sdUrl
           });
         }
-        if (d.music) {
+        if (musicUrl) {
           options.push({
             id: 'direct_audio',
             label: 'Audio Only (MP3)',
@@ -264,7 +274,7 @@ async function fetchCloudMediaInfo(url, platform) {
             ext: 'mp3',
             type: 'audio',
             badge: 'Audio',
-            directUrl: d.music
+            directUrl: musicUrl
           });
         }
         return {
@@ -272,7 +282,7 @@ async function fetchCloudMediaInfo(url, platform) {
           uploader: (d.author && (d.author.nickname || d.author.unique_id)) || 'TikTok Creator',
           duration: d.duration || 0,
           duration_string: '',
-          thumbnail: d.cover || d.origin_cover || '',
+          thumbnail: coverUrl || '',
           webpage_url: url,
           platform: 'tiktok',
           extractor: 'TikTok',
@@ -483,40 +493,73 @@ app.get('/api/thumbnail', (req, res) => {
 
 // Direct stream proxy for direct CDN URLs
 app.get('/api/proxy-download', (req, res) => {
-  const { directUrl, title, ext } = req.query;
+  let { directUrl, title, ext } = req.query;
   if (!directUrl) return res.status(400).send('Missing directUrl');
 
-  const cleanTitle = sanitizeFilename(title || 'video');
-  const fileExt = (ext || 'mp4').replace(/[^a-z0-9]/gi, '');
+  if (directUrl.startsWith('/')) {
+    directUrl = `https://www.tikwm.com${directUrl}`;
+  }
 
-  const streamUrl = (targetUrl) => {
-    const parsed = new URL(targetUrl);
+  const cleanTitle = sanitizeFilename(title || 'video');
+  const asciiTitle = cleanTitle.replace(/[^\x20-\x7E]/g, '').replace(/["\\]/g, '').trim() || 'video';
+  const fileExt = (ext || 'mp4').replace(/[^a-z0-9]/gi, '') || 'mp4';
+  const encodedFullFile = encodeURIComponent(`${cleanTitle}.${fileExt}`);
+
+  const streamUrl = (targetUrl, redirectCount = 0) => {
+    if (redirectCount > 8) {
+      if (!res.headersSent) res.status(502).send('Too many redirects from media source.');
+      return;
+    }
+
+    let parsed;
+    try {
+      parsed = new URL(targetUrl);
+    } catch {
+      if (!res.headersSent) res.status(400).send('Invalid media stream URL.');
+      return;
+    }
+
     const client = parsed.protocol === 'https:' ? https : http;
-    client.get(targetUrl, {
+    const reqOpts = {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': parsed.origin
-      }
-    }, (upRes) => {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+        'Referer': parsed.origin + '/'
+      },
+      rejectUnauthorized: false
+    };
+
+    client.get(targetUrl, reqOpts, (upRes) => {
       if (upRes.statusCode >= 300 && upRes.statusCode < 400 && upRes.headers.location) {
-        return streamUrl(upRes.headers.location);
+        upRes.resume();
+        const nextUrl = new URL(upRes.headers.location, targetUrl).href;
+        return streamUrl(nextUrl, redirectCount + 1);
       }
-      res.setHeader('Content-Disposition', `attachment; filename="${cleanTitle}.${fileExt}"`);
+
+      if (upRes.statusCode && upRes.statusCode >= 400) {
+        upRes.resume();
+        if (!res.headersSent) {
+          res.status(502).send(`Upstream media server returned HTTP ${upRes.statusCode}`);
+        }
+        return;
+      }
+
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${asciiTitle}.${fileExt}"; filename*=UTF-8''${encodedFullFile}`
+      );
       res.setHeader('Content-Type', upRes.headers['content-type'] || 'application/octet-stream');
       if (upRes.headers['content-length']) {
         res.setHeader('Content-Length', upRes.headers['content-length']);
       }
       upRes.pipe(res);
-    }).on('error', () => {
+    }).on('error', (err) => {
+      console.error('Proxy stream error:', err.message);
       if (!res.headersSent) res.status(500).send('Failed to proxy media stream.');
     });
   };
 
-  try {
-    streamUrl(directUrl);
-  } catch (e) {
-    res.status(400).send('Invalid stream URL');
-  }
+  streamUrl(directUrl);
 });
 
 // Fetch video metadata & available quality options
