@@ -6,6 +6,7 @@ const { spawn } = require('child_process');
 const https = require('https');
 const http = require('http');
 const ffmpegPath = require('ffmpeg-static');
+const btch = require('btch-downloader');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,7 +24,7 @@ const TEMP_DIR = path.join(BASE_WRITABLE_DIR, 'temp_downloads');
 if (!fs.existsSync(BIN_DIR)) fs.mkdirSync(BIN_DIR, { recursive: true });
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-let isBinaryReady = false;
+let isBinaryReady = IS_VERCEL ? true : false;
 let binaryDownloadPromise = null;
 
 // Active download jobs map for local live progress tracking
@@ -112,7 +113,9 @@ async function ensureYtDlp() {
   return binaryDownloadPromise;
 }
 
-ensureYtDlp().catch(() => {});
+if (!IS_VERCEL) {
+  ensureYtDlp().catch(() => {});
+}
 
 function detectPlatform(url) {
   const u = (url || '').toLowerCase();
@@ -159,64 +162,238 @@ function fetchJson(url, options = {}) {
   });
 }
 
-// Cloud fallback for TikTok via TikWM API (works reliably on serverless IPs)
-async function fetchTikTokFallback(url) {
-  const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`;
-  const res = await fetchJson(apiUrl);
-  if (!res || res.code !== 0 || !res.data) {
-    throw new Error('TikTok fallback unavailable');
+function parseQueryParamFromUrl(urlStr, paramName) {
+  try {
+    const decoded = decodeURIComponent(urlStr);
+    const match = decoded.match(new RegExp(`[?&]${paramName}=([0-9.]+)`));
+    return match ? parseFloat(match[1]) : null;
+  } catch {
+    return null;
   }
-  const d = res.data;
-  const options = [];
-  if (d.hdplay) {
-    options.push({
-      id: 'direct_hd',
-      label: 'Best Quality (HD No Watermark)',
+}
+
+// Cloud-native multi-platform extractor (works on Vercel / AWS Lambda without datacenter IP blocks)
+async function fetchCloudMediaInfo(url, platform) {
+  if (platform === 'youtube') {
+    const yt = await btch.youtube(url);
+    if (!yt || (!yt.mp4 && !yt.mp3)) {
+      throw new Error('Could not extract YouTube streams from cloud extractor.');
+    }
+    const videoSize = yt.mp4 ? parseQueryParamFromUrl(yt.mp4, 'clen') : null;
+    const audioSize = yt.mp3 ? parseQueryParamFromUrl(yt.mp3, 'clen') : null;
+    const dur = parseQueryParamFromUrl(yt.mp4 || yt.mp3 || '', 'dur') || 0;
+
+    const options = [];
+    if (yt.mp4) {
+      options.push({
+        id: 'cloud_yt_hd',
+        label: 'Best Quality Video (MP4)',
+        quality: 'HD / MP4',
+        ext: 'mp4',
+        type: 'video',
+        filesize: videoSize,
+        badge: 'Recommended',
+        directUrl: yt.mp4
+      });
+    }
+    if (yt.mp3) {
+      options.push({
+        id: 'cloud_yt_audio',
+        label: 'Audio Only (M4A / MP3)',
+        quality: 'Audio',
+        ext: 'm4a',
+        type: 'audio',
+        filesize: audioSize,
+        badge: 'Audio',
+        directUrl: yt.mp3
+      });
+    }
+
+    return {
+      title: yt.title || 'YouTube Video',
+      uploader: yt.author || 'YouTube Channel',
+      duration: dur,
+      duration_string: '',
+      thumbnail: yt.thumbnail || '',
+      webpage_url: url,
+      platform: 'youtube',
+      extractor: 'YouTube',
+      view_count: null,
+      like_count: null,
+      isServerless: true,
+      options
+    };
+  }
+
+  if (platform === 'tiktok') {
+    try {
+      const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`;
+      const res = await fetchJson(apiUrl);
+      if (res && res.code === 0 && res.data) {
+        const d = res.data;
+        const options = [];
+        if (d.hdplay) {
+          options.push({
+            id: 'direct_hd',
+            label: 'Best Quality (HD No Watermark)',
+            quality: 'HD',
+            ext: 'mp4',
+            type: 'video',
+            filesize: d.hd_size || d.size || null,
+            badge: 'HD',
+            directUrl: d.hdplay
+          });
+        }
+        if (d.play) {
+          options.push({
+            id: 'direct_sd',
+            label: 'Standard Video (No Watermark)',
+            quality: 'SD',
+            ext: 'mp4',
+            type: 'video',
+            filesize: d.size || null,
+            badge: 'MP4',
+            directUrl: d.play
+          });
+        }
+        if (d.music) {
+          options.push({
+            id: 'direct_audio',
+            label: 'Audio Only (MP3)',
+            quality: 'Audio',
+            ext: 'mp3',
+            type: 'audio',
+            badge: 'Audio',
+            directUrl: d.music
+          });
+        }
+        return {
+          title: d.title || 'TikTok Video',
+          uploader: (d.author && (d.author.nickname || d.author.unique_id)) || 'TikTok Creator',
+          duration: d.duration || 0,
+          duration_string: '',
+          thumbnail: d.cover || d.origin_cover || '',
+          webpage_url: url,
+          platform: 'tiktok',
+          extractor: 'TikTok',
+          view_count: d.play_count || null,
+          like_count: d.digg_count || null,
+          isServerless: true,
+          options
+        };
+      }
+    } catch {}
+
+    const tt = await btch.ttdl(url);
+    if (!tt || !tt.video || !tt.video.length) {
+      throw new Error('Could not extract TikTok video.');
+    }
+    const options = [{
+      id: 'tt_video',
+      label: 'Best Quality (No Watermark MP4)',
       quality: 'HD',
       ext: 'mp4',
       type: 'video',
-      filesize: d.hd_size || d.size || null,
-      badge: 'HD',
-      directUrl: d.hdplay
-    });
+      badge: 'Recommended',
+      directUrl: tt.video[0]
+    }];
+    if (tt.audio && tt.audio[0]) {
+      options.push({
+        id: 'tt_audio',
+        label: 'Audio Only (MP3)',
+        quality: 'Audio',
+        ext: 'mp3',
+        type: 'audio',
+        badge: 'Audio',
+        directUrl: tt.audio[0]
+      });
+    }
+    return {
+      title: tt.title || 'TikTok Video',
+      uploader: 'TikTok Creator',
+      duration: 0,
+      duration_string: '',
+      thumbnail: tt.thumbnail || '',
+      webpage_url: url,
+      platform: 'tiktok',
+      extractor: 'TikTok',
+      isServerless: true,
+      options
+    };
   }
-  if (d.play) {
-    options.push({
-      id: 'direct_sd',
-      label: 'Standard Video (No Watermark)',
-      quality: 'SD',
+
+  if (platform === 'instagram') {
+    const ig = await btch.igdl(url);
+    const list = (ig && Array.isArray(ig.result)) ? ig.result : (Array.isArray(ig) ? ig : []);
+    if (!list.length) {
+      throw new Error('Could not extract Instagram media. Make sure the Reel/Post is public.');
+    }
+    const options = list.map((item, idx) => ({
+      id: `ig_${idx}`,
+      label: list.length > 1 ? `Media #${idx + 1} (HD MP4)` : 'Best Quality (Original MP4)',
+      quality: 'HD',
       ext: 'mp4',
       type: 'video',
-      filesize: d.size || null,
-      badge: 'MP4',
-      directUrl: d.play
-    });
+      badge: idx === 0 ? 'Recommended' : 'HD',
+      directUrl: item.url
+    }));
+    return {
+      title: 'Instagram Reel / Video',
+      uploader: 'Instagram Creator',
+      duration: 0,
+      duration_string: '',
+      thumbnail: list[0].thumbnail || '',
+      webpage_url: url,
+      platform: 'instagram',
+      extractor: 'Instagram',
+      isServerless: true,
+      options
+    };
   }
-  if (d.music) {
-    options.push({
-      id: 'direct_audio',
-      label: 'Audio Only (MP3)',
-      quality: 'Audio',
-      ext: 'mp3',
-      type: 'audio',
-      badge: 'Audio',
-      directUrl: d.music
-    });
+
+  if (platform === 'facebook') {
+    const fb = await btch.fbdown(url);
+    if (!fb || (!fb.HD && !fb.Normal_video)) {
+      throw new Error('Could not extract Facebook video. Make sure the video is public.');
+    }
+    const options = [];
+    if (fb.HD) {
+      options.push({
+        id: 'fb_hd',
+        label: 'HD Quality Video (MP4)',
+        quality: 'HD',
+        ext: 'mp4',
+        type: 'video',
+        badge: 'HD',
+        directUrl: fb.HD
+      });
+    }
+    if (fb.Normal_video) {
+      options.push({
+        id: 'fb_sd',
+        label: 'SD Quality Video (MP4)',
+        quality: 'SD',
+        ext: 'mp4',
+        type: 'video',
+        badge: 'SD',
+        directUrl: fb.Normal_video
+      });
+    }
+    return {
+      title: 'Facebook Video',
+      uploader: 'Facebook Creator',
+      duration: 0,
+      duration_string: '',
+      thumbnail: '',
+      webpage_url: url,
+      platform: 'facebook',
+      extractor: 'Facebook',
+      isServerless: true,
+      options
+    };
   }
-  return {
-    title: d.title || 'TikTok Video',
-    uploader: (d.author && (d.author.nickname || d.author.unique_id)) || 'TikTok Creator',
-    duration: d.duration || 0,
-    duration_string: '',
-    thumbnail: d.cover || d.origin_cover || '',
-    webpage_url: url,
-    platform: 'tiktok',
-    extractor: 'TikTok',
-    view_count: d.play_count || null,
-    like_count: d.digg_count || null,
-    isServerless: IS_VERCEL,
-    options
-  };
+
+  throw new Error('Unsupported platform for cloud fallback');
 }
 
 function runYtDlpJson(url) {
@@ -250,14 +427,17 @@ function runYtDlpJson(url) {
     proc.stderr.on('data', (d) => { stderr += d.toString(); });
 
     proc.on('close', (code) => {
-      if (code !== 0 && !stdout) {
+      if (code !== 0 && !stdout.trim()) {
         return reject(new Error(stderr.trim() || 'Could not fetch video details. Make sure the link is public and valid.'));
       }
       try {
         const info = JSON.parse(stdout);
+        if (!info || typeof info !== 'object') {
+          return reject(new Error(stderr.trim() || 'Could not extract media info from URL.'));
+        }
         resolve(info);
       } catch (err) {
-        reject(new Error('Failed to parse media info from the link.'));
+        reject(new Error(stderr.trim() || 'Failed to parse media info from the link.'));
       }
     });
 
@@ -355,6 +535,16 @@ app.post('/api/info', async (req, res) => {
 
   const platform = detectPlatform(parsedUrl.href);
 
+  // On Vercel serverless, use the fast cloud-native extractor first to avoid datacenter IP blocks
+  if (IS_VERCEL && platform !== 'other') {
+    try {
+      const cloudData = await fetchCloudMediaInfo(parsedUrl.href, platform);
+      return res.json(cloudData);
+    } catch (cloudErr) {
+      console.warn('Cloud extractor fallback to yt-dlp:', cloudErr.message);
+    }
+  }
+
   try {
     const info = await runYtDlpJson(parsedUrl.href);
 
@@ -365,7 +555,6 @@ app.post('/api/info', async (req, res) => {
     const bestAudio = audioFormats.sort((a, b) => (b.abr || 0) - (a.abr || 0))[0];
     const audioBytes = bestAudio ? (bestAudio.filesize || bestAudio.filesize_approx || 0) : 0;
 
-    // Find combined (video+audio) formats with direct https URLs (useful on serverless)
     const combinedFormats = rawFormats
       .filter(f => f.vcodec && f.vcodec !== 'none' && f.acodec && f.acodec !== 'none' && f.url && f.protocol && f.protocol.startsWith('http'))
       .sort((a, b) => (b.height || 0) - (a.height || 0));
@@ -439,11 +628,13 @@ app.post('/api/info', async (req, res) => {
     });
   } catch (err) {
     console.error('Info error:', err.message);
-    if (platform === 'tiktok') {
+    if (platform !== 'other') {
       try {
-        const fbData = await fetchTikTokFallback(parsedUrl.href);
-        return res.json(fbData);
-      } catch {}
+        const fallbackData = await fetchCloudMediaInfo(parsedUrl.href, platform);
+        return res.json(fallbackData);
+      } catch (fbErr) {
+        console.error('Cloud fallback error:', fbErr.message);
+      }
     }
     res.status(500).json({
       error: err.message || 'Unable to fetch video information. Please check the URL and try again.'
@@ -451,7 +642,7 @@ app.post('/api/info', async (req, res) => {
   }
 });
 
-// Single-request download endpoint (used on Vercel serverless & direct fallback)
+// Single-request download endpoint
 app.get('/api/download', async (req, res) => {
   const { url, format, title, type } = req.query;
   if (!url) return res.status(400).send('URL is required');
