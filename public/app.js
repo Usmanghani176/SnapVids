@@ -43,8 +43,8 @@ const placeholders = {
   facebook: 'Paste Facebook Watch or Reel link (e.g., https://www.facebook.com/watch/...)'
 };
 
-// Theme Setup
-const savedTheme = localStorage.getItem('streamsave_theme') || 'dark';
+// Theme Setup (Default: Light / White)
+const savedTheme = localStorage.getItem('streamsave_theme') || 'light';
 document.documentElement.setAttribute('data-theme', savedTheme);
 
 themeToggle.addEventListener('click', () => {
