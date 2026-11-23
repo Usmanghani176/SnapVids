@@ -529,8 +529,8 @@ function triggerDownloadForOption(opt) {
   });
 }
 
-// Download Process with Live Progress
-async function startTrackedDownload({ url, format, type, title, label, ext, directUrl, isServerless }) {
+// Download Process: Prepare in web, then stream/merge directly through Chrome's Download Manager
+async function startTrackedDownload({ url, format, type, title, label, ext, directUrl }) {
   hideAlert();
   closeFormatDropdown();
 
@@ -542,143 +542,85 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
   primaryDownloadBtn.disabled = true;
   primaryDownloadBtn.querySelector('.btn-label').textContent = 'Preparing...';
 
-  // Show & Reset Progress Card
+  // Show Status Card
   progressSpinner.classList.remove('hidden');
   downloadProgressNote.classList.remove('hidden');
-  downloadProgressBar.style.width = '2%';
+  downloadProgressBar.style.width = '4%';
   downloadPercentBadge.textContent = '0%';
-  downloadProgressText.textContent = `Connecting to stream (${label})...`;
-  downloadSizeInfo.textContent = 'Initializing media download...';
+  downloadProgressText.textContent = `Preparing ${label} for Chrome Downloader...`;
+  downloadSizeInfo.textContent = 'Analyzing & initializing stream merge...';
   downloadSpeedInfo.textContent = '';
   downloadProgressNote.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
-  // Cloud / Direct Stream Download (Single Request with ReadableStream byte tracking)
-  if (isServerless || directUrl) {
-    try {
-      const targetEndpoint = directUrl
-        ? `/api/proxy-download?directUrl=${encodeURIComponent(directUrl)}&title=${encodeURIComponent(title)}&ext=${encodeURIComponent(ext || 'mp4')}`
-        : `/api/download?url=${encodeURIComponent(url)}&format=${encodeURIComponent(format)}&type=${encodeURIComponent(type)}&title=${encodeURIComponent(title)}`;
-
-      let fakePct = 5;
-      activePollTimer = setInterval(() => {
-        if (fakePct < 90) {
-          fakePct += Math.max(1, Math.round((92 - fakePct) * 0.1));
-          downloadProgressBar.style.width = `${fakePct}%`;
-          downloadPercentBadge.textContent = `${fakePct}%`;
-          downloadProgressText.textContent = `Processing YouTube Stream... ${fakePct}%`;
-          primaryDownloadBtn.querySelector('.btn-label').textContent = `${fakePct}%`;
-          document.title = `(${fakePct}%) Downloading — SnapVids`;
-        }
-      }, 450);
-
-      const response = await fetch(targetEndpoint);
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(errText || 'Failed to download YouTube video.');
-      }
-
-      const contentLength = parseInt(response.headers.get('Content-Length') || '0', 10);
-      let blob;
-
-      if (response.body && contentLength > 0) {
-        clearInterval(activePollTimer);
-        activePollTimer = null;
-
-        const reader = response.body.getReader();
-        const chunks = [];
-        let receivedLength = 0;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-          receivedLength += value.length;
-          const pct = Math.min(99, Math.round((receivedLength / contentLength) * 100));
-          downloadProgressBar.style.width = `${pct}%`;
-          downloadPercentBadge.textContent = `${pct}%`;
-          downloadProgressText.textContent = `Downloading Stream... ${pct}%`;
-          downloadSizeInfo.textContent = `${formatBytes(receivedLength)} / ${formatBytes(contentLength)}`;
-          primaryDownloadBtn.querySelector('.btn-label').textContent = `${pct}%`;
-          document.title = `(${pct}%) Downloading — SnapVids`;
-        }
-        blob = new Blob(chunks);
-      } else {
-        blob = await response.blob();
-        if (activePollTimer) {
-          clearInterval(activePollTimer);
-          activePollTimer = null;
-        }
-      }
-
-      document.title = defaultPageTitle;
-      downloadProgressBar.style.width = '100%';
-      downloadPercentBadge.textContent = '100%';
-      progressSpinner.classList.add('hidden');
-      downloadProgressText.textContent = '✅ 100% Complete! File saved to browser downloads.';
-      downloadSizeInfo.textContent = `Size: ${formatBytes(blob.size)}`;
-      downloadSpeedInfo.textContent = 'Saved to Downloads folder';
-      primaryDownloadBtn.disabled = false;
-      primaryDownloadBtn.querySelector('.btn-label').textContent = 'Download';
-
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      const safeName = (title || 'youtube_video').replace(/[<>:"/\\|?*]/g, '').trim().slice(0, 90) || 'youtube_video';
-      const fileExt = ext || (type === 'audio' ? 'm4a' : 'mp4');
-      a.download = `${safeName}.${fileExt}`;
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => {
-        URL.revokeObjectURL(blobUrl);
-        a.remove();
-      }, 5000);
-    } catch (err) {
-      if (activePollTimer) clearInterval(activePollTimer);
-      activePollTimer = null;
-      document.title = defaultPageTitle;
-      downloadProgressNote.classList.add('hidden');
-      showAlert(err.message || 'Download failed.');
-      primaryDownloadBtn.disabled = false;
-      primaryDownloadBtn.querySelector('.btn-label').textContent = 'Download';
-    }
-    return;
-  }
-
-  // Local Tracked Download with real-time FFmpeg & yt-dlp progress
   try {
-    const startRes = await fetch('/api/start-download', {
+    const prepRes = await fetch('/api/prepare-download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, format, type, title })
+      body: JSON.stringify({ url, format, type, title, directUrl })
     });
 
-    const startData = await startRes.json();
-    if (!startRes.ok || !startData.jobId) {
-      throw new Error(startData.error || 'Could not start download.');
+    const prepData = await prepRes.json();
+    if (!prepRes.ok || !prepData.downloadUrl) {
+      throw new Error(prepData.error || 'Could not prepare download stream.');
     }
 
-    const jobId = startData.jobId;
+    // Trigger Chrome's native Download Manager immediately (NO web-page Blob buffering!)
+    const a = document.createElement('a');
+    a.href = prepData.downloadUrl;
+    if (prepData.filename) {
+      a.setAttribute('download', prepData.filename);
+    }
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => a.remove(), 1500);
 
+    // Re-enable download button shortly after handing off to Chrome
+    setTimeout(() => {
+      primaryDownloadBtn.disabled = false;
+      primaryDownloadBtn.querySelector('.btn-label').textContent = 'Download';
+    }, 1500);
+
+    if (!prepData.ticketId) {
+      progressSpinner.classList.add('hidden');
+      downloadProgressBar.style.width = '100%';
+      downloadPercentBadge.textContent = 'Chrome';
+      downloadProgressText.textContent = '⬇️ Downloading directly inside Chrome Downloads (Ctrl+J)!';
+      downloadSizeInfo.textContent = `Format: ${label}`;
+      downloadSpeedInfo.textContent = 'Check Chrome top-right Downloads bar';
+      return;
+    }
+
+    const ticketId = prepData.ticketId;
+    const isMerge = prepData.mode === 'merge' || prepData.mode === 'mp3';
+    downloadProgressText.textContent = isMerge
+      ? '⬇️ Merging & downloading in Chrome Downloads (Ctrl+J)...'
+      : '⬇️ Downloading directly in Chrome Downloads (Ctrl+J)...';
+
+    // Lightweight read-only observer of live bytes streamed into Chrome Downloader
     activePollTimer = setInterval(async () => {
       try {
-        const progRes = await fetch(`/api/progress/${jobId}`);
-        if (!progRes.ok) return;
-        const prog = await progRes.json();
+        const stRes = await fetch(`/api/stream-status/${ticketId}`);
+        if (!stRes.ok) return;
+        const st = await stRes.json();
 
-        const pct = Math.round(prog.percent || 0);
-        downloadProgressBar.style.width = `${Math.max(3, pct)}%`;
-        downloadPercentBadge.textContent = `${pct}%`;
-        downloadProgressText.textContent = prog.stageText || `Downloading... ${pct}%`;
-        primaryDownloadBtn.querySelector('.btn-label').textContent = prog.status === 'merging' ? 'Merging...' : `${pct}%`;
-        document.title = `(${pct}%) Downloading — SnapVids`;
+        const sent = st.bytesSent || 0;
+        const expected = st.expectedBytes || prepData.expectedBytes || 0;
+        const pct = expected > 0 ? Math.min(99, Math.round((sent / expected) * 100)) : (st.status === 'streaming' ? 15 : 4);
 
-        if (prog.totalSize) downloadSizeInfo.textContent = `Total Size: ${prog.totalSize}`;
-        const metaParts = [];
-        if (prog.speed) metaParts.push(`Speed: ${prog.speed}`);
-        if (prog.eta) metaParts.push(`ETA: ${prog.eta}`);
-        downloadSpeedInfo.textContent = metaParts.join(' • ');
-
-        if (prog.status === 'completed') {
+        if (st.status === 'streaming') {
+          downloadProgressBar.style.width = `${Math.max(4, pct)}%`;
+          downloadPercentBadge.textContent = expected > 0 ? `${pct}%` : 'Live';
+          downloadProgressText.textContent = isMerge
+            ? `⬇️ Merging & streaming in Chrome Downloader... ${expected > 0 ? pct + '%' : ''}`
+            : `⬇️ Downloading in Chrome Downloader... ${expected > 0 ? pct + '%' : ''}`;
+          downloadSizeInfo.textContent = expected > 0
+            ? `${formatBytes(sent)} / ${formatBytes(expected)}`
+            : `Streamed: ${formatBytes(sent)}`;
+          const speedStr = st.speedBps > 0 ? `${formatBytes(st.speedBps)}/s` : 'Connecting...';
+          downloadSpeedInfo.textContent = `${speedStr} • Active in Chrome (Ctrl+J)`;
+          if (expected > 0) document.title = `(${pct}%) Downloading — SnapVids`;
+        } else if (st.status === 'completed') {
           clearInterval(activePollTimer);
           activePollTimer = null;
           document.title = defaultPageTitle;
@@ -686,34 +628,35 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
           downloadProgressBar.style.width = '100%';
           downloadPercentBadge.textContent = '100%';
           progressSpinner.classList.add('hidden');
-          downloadProgressText.textContent = '✅ 100% Complete! File saved to browser downloads.';
-          downloadSpeedInfo.textContent = 'Saved to your Downloads folder';
-          primaryDownloadBtn.disabled = false;
-          primaryDownloadBtn.querySelector('.btn-label').textContent = 'Download';
-
-          const a = document.createElement('a');
-          a.href = `/api/file/${jobId}`;
-          a.style.display = 'none';
-          document.body.appendChild(a);
-          a.click();
-          setTimeout(() => a.remove(), 2000);
-        } else if (prog.status === 'error') {
+          downloadProgressText.textContent = '✅ 100% Complete! File downloaded via Chrome Downloader.';
+          downloadSizeInfo.textContent = `Downloaded: ${formatBytes(sent || expected)}`;
+          downloadSpeedInfo.textContent = 'Saved in Chrome Downloads (Ctrl+J)';
+        } else if (st.status === 'cancelled') {
+          clearInterval(activePollTimer);
+          activePollTimer = null;
+          document.title = defaultPageTitle;
+          progressSpinner.classList.add('hidden');
+          downloadProgressText.textContent = 'Download cancelled in Chrome.';
+          downloadSpeedInfo.textContent = '';
+        } else if (st.status === 'error') {
           clearInterval(activePollTimer);
           activePollTimer = null;
           document.title = defaultPageTitle;
           downloadProgressNote.classList.add('hidden');
-          showAlert(prog.error || 'Download failed. Please try another quality option.');
+          showAlert(st.error || 'Stream error occurred. Please try another format.');
           primaryDownloadBtn.disabled = false;
           primaryDownloadBtn.querySelector('.btn-label').textContent = 'Download';
         }
       } catch {
-        // Ignore transient poll hiccup
+        // Ignore transient poll errors
       }
-    }, 350);
+    }, 500);
   } catch (err) {
+    if (activePollTimer) clearInterval(activePollTimer);
+    activePollTimer = null;
     document.title = defaultPageTitle;
     downloadProgressNote.classList.add('hidden');
-    showAlert(err.message || 'Failed to start download.');
+    showAlert(err.message || 'Failed to start Chrome download.');
     primaryDownloadBtn.disabled = false;
     primaryDownloadBtn.querySelector('.btn-label').textContent = 'Download';
   }
