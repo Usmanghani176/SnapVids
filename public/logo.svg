@@ -1,0 +1,12 @@
+<svg viewBox="0 0 64 64" width="64" height="64" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="pulse-dock-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#27272a"/>
+      <stop offset="100%" stop-color="#09090b"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="64" height="64" rx="18" fill="url(#pulse-dock-bg)"/>
+  <path d="M17 15.5C17 13.2 19.5 11.8 21.5 13L47.5 28.5C49.4 29.6 49.4 32.4 47.5 33.5L21.5 49C19.5 50.2 17 48.8 17 46.5V15.5Z" fill="#ef4444"/>
+  <path d="M28.5 23V37M23.5 32L28.5 37L33.5 32" stroke="#ffffff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M21 51.5H43" stroke="#ffffff" stroke-width="3.4" stroke-linecap="round" opacity="0.92"/>
+</svg>
