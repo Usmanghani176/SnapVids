@@ -215,18 +215,33 @@
               </svg>
             </button>
 
-            <!-- Expanded Dropdown Panel for Choosing Other Resolutions / Audio -->
-            <div id="format-panel" class="format-panel hidden">
-              <!-- Format Filter Tabs -->
-              <div class="format-tabs-bar">
-                <button type="button" class="ftab active" data-filter="all">All Formats</button>
-                <button type="button" class="ftab" data-filter="video">Video (MP4)</button>
-                <button type="button" class="ftab" data-filter="audio">Audio (MP3)</button>
+            <!-- Grouped Dropdown Menu (Directly matching ytdown.to layout) -->
+            <div id="format-dropdown-menu" class="format-dropdown-menu hidden">
+              <!-- Video Group -->
+              <div class="dropdown-group" id="group-video-container">
+                <div class="dropdown-group-header">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></svg>
+                  <span>Video</span>
+                </div>
+                <div id="group-video-list" class="dropdown-items-list"></div>
               </div>
 
-              <!-- List of Formats -->
-              <div id="options-list" class="options-list">
-                <!-- Populated dynamically via app.js -->
+              <!-- Audio Group -->
+              <div class="dropdown-group" id="group-audio-container">
+                <div class="dropdown-group-header">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+                  <span>Audio</span>
+                </div>
+                <div id="group-audio-list" class="dropdown-items-list"></div>
+              </div>
+
+              <!-- Subtitles Group -->
+              <div class="dropdown-group hidden" id="group-subtitles-container">
+                <div class="dropdown-group-header">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"></rect><line x1="7" y1="15" x2="17" y2="15"></line><line x1="7" y1="11" x2="17" y2="11"></line></svg>
+                  <span>Subtitles</span>
+                </div>
+                <div id="group-subtitles-list" class="dropdown-items-list"></div>
               </div>
             </div>
 

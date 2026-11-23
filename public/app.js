@@ -33,13 +33,18 @@ const statValComments = document.getElementById('stat-val-comments');
 // Format Selector Elements
 const formatControlsGroup = document.querySelector('.format-controls-group');
 const formatSelectTrigger = document.getElementById('format-select-trigger');
-const formatPanel = document.getElementById('format-panel');
+const formatDropdownMenu = document.getElementById('format-dropdown-menu');
 const selectedFormatText = document.getElementById('selected-format-text');
 const activeTagBadge = document.getElementById('active-tag-badge');
 const activeSpecText = document.getElementById('active-spec-text');
 const primaryDownloadBtn = document.getElementById('primary-download-btn');
-const formatTabs = document.querySelectorAll('.ftab');
-const optionsList = document.getElementById('options-list');
+
+const groupVideoContainer = document.getElementById('group-video-container');
+const groupVideoList = document.getElementById('group-video-list');
+const groupAudioContainer = document.getElementById('group-audio-container');
+const groupAudioList = document.getElementById('group-audio-list');
+const groupSubtitlesContainer = document.getElementById('group-subtitles-container');
+const groupSubtitlesList = document.getElementById('group-subtitles-list');
 
 // Progress Card Elements
 const downloadProgressNote = document.getElementById('download-progress-note');
@@ -179,22 +184,24 @@ function formatNumber(num) {
 }
 
 // Format Dropdown Toggle
-formatSelectTrigger.addEventListener('click', () => {
-  const isHidden = formatPanel.classList.toggle('hidden');
+formatSelectTrigger.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const isHidden = formatDropdownMenu.classList.toggle('hidden');
   formatSelectTrigger.classList.toggle('active', !isHidden);
   if (formatControlsGroup) {
     formatControlsGroup.classList.toggle('open', !isHidden);
   }
 });
 
-// Format Category Filter Tabs (All / Video / Audio)
-formatTabs.forEach(tab => {
-  tab.addEventListener('click', () => {
-    formatTabs.forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    currentFormatFilter = tab.dataset.filter;
-    renderOptionsList();
-  });
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  if (formatDropdownMenu && !formatDropdownMenu.classList.contains('hidden')) {
+    if (!formatControlsGroup.contains(e.target)) {
+      formatDropdownMenu.classList.add('hidden');
+      formatSelectTrigger.classList.remove('active');
+      if (formatControlsGroup) formatControlsGroup.classList.remove('open');
+    }
+  }
 });
 
 // Description "See more" Toggle
@@ -343,16 +350,16 @@ function renderResult(data, originalUrl) {
     statPillComments.classList.add('hidden');
   }
 
-  // Set default selection to 1080p if available, else first option
+  // Set default selection to 1080p if available, else 720p or first option
   const options = data.options || [];
-  const defaultOpt = options.find(o => o.quality === '1080p' || o.id === 'height_1080') || options[0] || null;
+  const defaultOpt = options.find(o => o.quality === '1080p' || o.id === 'height_1080') ||
+                     options.find(o => o.quality === '720p' || o.id === 'height_720') ||
+                     options[0] || null;
   currentSelectedOption = defaultOpt;
   updateSelectedDisplay();
 
-  // Reset category filter & render options list
-  currentFormatFilter = 'all';
-  formatTabs.forEach(t => t.classList.toggle('active', t.dataset.filter === 'all'));
-  formatPanel.classList.add('hidden'); // Dropdown closed by default as in screenshot
+  // Reset dropdown menu to closed
+  formatDropdownMenu.classList.add('hidden');
   formatSelectTrigger.classList.remove('active');
   if (formatControlsGroup) {
     formatControlsGroup.classList.remove('open');
@@ -371,21 +378,19 @@ function updateSelectedDisplay() {
   const sizeText = opt.filesize ? formatBytes(opt.filesize) : '';
   const sizePart = sizeText ? ` · ${sizeText}` : '';
   const extPart = (opt.ext || 'MP4').toUpperCase();
-  const qualityText = opt.quality || opt.label;
 
   // Top Trigger Bar text: e.g. "1080p · MP4 · 274.73 MB"
-  selectedFormatText.textContent = `${qualityText} · ${extPart}${sizePart}`;
+  selectedFormatText.textContent = `${opt.label || opt.quality}${sizePart}`;
 
   // Active Highlight Card meta:
-  // Badge: "Needs processing" (or "Direct" / "Audio")
-  // Spec text: "MP4 · FHD · 274.73 MB"
+  // e.g. [Needs processing] MP4 · FHD · 274.73 MB [↓ Download]
   const badgeLabel = opt.badge || (opt.type === 'audio' ? 'Audio' : (opt.quality === '1080p' ? 'Needs processing' : 'HD'));
   activeTagBadge.textContent = badgeLabel;
   activeTagBadge.className = `status-badge ${opt.type === 'audio' ? 'audio' : ''}`;
 
   let resTag = opt.resolutionTag || (opt.quality === '1080p' ? 'FHD' : (opt.quality === '720p' ? 'HD' : opt.quality));
   if (opt.type === 'audio') {
-    activeSpecText.textContent = `MP3 · 320kbps${sizePart}`;
+    activeSpecText.textContent = `${extPart} · ${opt.resolutionTag || 'Audio'}${sizePart}`;
   } else {
     activeSpecText.textContent = `${extPart} · ${resTag}${sizePart}`;
   }
@@ -396,50 +401,89 @@ function updateSelectedDisplay() {
   };
 }
 
-// Render dynamic format options list
+// Render dynamic format options list grouped by Video, Audio, and Subtitles (matching ytdown.to)
 function renderOptionsList() {
   if (!currentVideoData || !currentVideoData.options) return;
 
-  optionsList.innerHTML = '';
-  const filtered = currentVideoData.options.filter(opt => {
-    if (currentFormatFilter === 'video') return opt.type === 'video';
-    if (currentFormatFilter === 'audio') return opt.type === 'audio';
-    return true;
-  });
+  groupVideoList.innerHTML = '';
+  groupAudioList.innerHTML = '';
+  groupSubtitlesList.innerHTML = '';
 
-  filtered.forEach(opt => {
+  // 1. Video Options
+  const videoOpts = currentVideoData.options.filter(o => o.type === 'video');
+  videoOpts.forEach(opt => {
     const isSelected = currentSelectedOption && currentSelectedOption.id === opt.id;
-    const isAudio = opt.type === 'audio';
     const sizeStr = opt.filesize ? formatBytes(opt.filesize) : '';
 
-    const row = document.createElement('div');
-    row.className = `option-row ${isSelected ? 'selected' : ''}`;
-
-    row.innerHTML = `
-      <div class="option-lead">
-        <span class="quality-badge ${isAudio ? 'audio' : ''}">${opt.badge || opt.quality || opt.ext}</span>
-        <span class="option-name">${opt.label}</span>
-      </div>
-      <div class="option-tail">
-        ${sizeStr ? `<span class="option-filesize">${sizeStr}</span>` : ''}
-        <button type="button" class="option-select-btn">${isSelected ? 'Selected' : 'Choose'}</button>
-      </div>
+    const item = document.createElement('div');
+    item.className = `dropdown-item ${isSelected ? 'selected' : ''}`;
+    item.innerHTML = `
+      <span>${opt.label}</span>
+      ${sizeStr ? `<span class="item-sub-tag">${sizeStr}</span>` : ''}
     `;
 
-    row.addEventListener('click', () => {
+    item.addEventListener('click', () => {
       currentSelectedOption = opt;
       updateSelectedDisplay();
       renderOptionsList();
-      // Smoothly close dropdown after selection
-      formatPanel.classList.add('hidden');
+      formatDropdownMenu.classList.add('hidden');
       formatSelectTrigger.classList.remove('active');
-      if (formatControlsGroup) {
-        formatControlsGroup.classList.remove('open');
-      }
+      if (formatControlsGroup) formatControlsGroup.classList.remove('open');
     });
 
-    optionsList.appendChild(row);
+    groupVideoList.appendChild(item);
   });
+
+  // 2. Audio Options
+  const audioOpts = currentVideoData.options.filter(o => o.type === 'audio');
+  audioOpts.forEach(opt => {
+    const isSelected = currentSelectedOption && currentSelectedOption.id === opt.id;
+    const sizeStr = opt.filesize ? formatBytes(opt.filesize) : '';
+
+    const item = document.createElement('div');
+    item.className = `dropdown-item ${isSelected ? 'selected' : ''}`;
+    item.innerHTML = `
+      <span>${opt.label}</span>
+      ${sizeStr ? `<span class="item-sub-tag">${sizeStr}</span>` : ''}
+    `;
+
+    item.addEventListener('click', () => {
+      currentSelectedOption = opt;
+      updateSelectedDisplay();
+      renderOptionsList();
+      formatDropdownMenu.classList.add('hidden');
+      formatSelectTrigger.classList.remove('active');
+      if (formatControlsGroup) formatControlsGroup.classList.remove('open');
+    });
+
+    groupAudioList.appendChild(item);
+  });
+
+  // 3. Subtitles
+  const subs = currentVideoData.subtitles || [];
+  if (subs.length > 0) {
+    groupSubtitlesContainer.classList.remove('hidden');
+    subs.forEach(sub => {
+      const item = document.createElement('div');
+      item.className = 'dropdown-item';
+      item.innerHTML = `
+        <span>${sub.label}</span>
+        <span class="item-sub-tag">VTT</span>
+      `;
+
+      item.addEventListener('click', () => {
+        const title = currentVideoData.title || 'subtitles';
+        window.location.href = `/api/subtitle?url=${encodeURIComponent(sub.url)}&lang=${encodeURIComponent(sub.code)}&title=${encodeURIComponent(title)}`;
+        formatDropdownMenu.classList.add('hidden');
+        formatSelectTrigger.classList.remove('active');
+        if (formatControlsGroup) formatControlsGroup.classList.remove('open');
+      });
+
+      groupSubtitlesList.appendChild(item);
+    });
+  } else {
+    groupSubtitlesContainer.classList.add('hidden');
+  }
 }
 
 // Trigger Download for a specific option

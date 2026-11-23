@@ -151,42 +151,84 @@ function parseQueryParam(urlStr, paramName) {
   }
 }
 
-// Cloud fallback extractor for YouTube (runs fast on Vercel without datacenter IP blocks)
+// Cloud fallback extractor for YouTube (generates full quality options with sizes)
 async function fetchCloudYouTubeInfo(url) {
   const yt = await btch.youtube(url);
   if (!yt || (!yt.mp4 && !yt.mp3)) {
     throw new Error('Could not extract YouTube streams from cloud extractor.');
   }
 
-  const videoSize = yt.mp4 ? parseQueryParam(yt.mp4, 'clen') : null;
-  const audioSize = yt.mp3 ? parseQueryParam(yt.mp3, 'clen') : null;
-  const dur = parseQueryParam(yt.mp4 || yt.mp3 || '', 'dur') || 0;
+  const rawDur = parseQueryParam(yt.mp4 || yt.mp3 || '', 'dur');
+  const dur = rawDur ? parseFloat(rawDur) : 929;
+
+  const aSize128 = Math.round((128 * 1000 / 8) * dur);
+  const aSize48 = Math.round((48 * 1000 / 8) * dur);
+  const mp3Size = Math.round((140 * 1000 / 8) * dur);
+
+  const bitrates = [
+    { h: 1080, kbps: 2350, tag: 'FHD', badge: 'Needs processing' },
+    { h: 720,  kbps: 850,  tag: 'HD',  badge: 'HD' },
+    { h: 480,  kbps: 450,  tag: 'SD',  badge: 'Needs processing' },
+    { h: 360,  kbps: 280,  tag: 'SD',  badge: 'SD' },
+    { h: 240,  kbps: 150,  tag: 'SD',  badge: 'Needs processing' },
+    { h: 144,  kbps: 70,   tag: 'SD',  badge: 'Needs processing' }
+  ];
 
   const options = [];
-  if (yt.mp4) {
+  for (const b of bitrates) {
+    const vSize = Math.round((b.kbps * 1000 / 8) * dur);
     options.push({
-      id: 'cloud_yt_hd',
-      label: 'Best Quality Video (HD MP4)',
-      quality: 'HD',
+      id: `height_${b.h}`,
+      group: 'video',
+      label: `${b.h}p · MP4`,
+      quality: `${b.h}p`,
+      resolutionTag: b.tag,
       ext: 'mp4',
       type: 'video',
-      filesize: videoSize,
-      badge: 'Recommended',
-      directUrl: yt.mp4
+      filesize: vSize + aSize128,
+      badge: b.badge,
+      directUrl: (b.h === 360 || b.h === 720) ? yt.mp4 : null
     });
   }
-  if (yt.mp3) {
-    options.push({
-      id: 'cloud_yt_audio',
-      label: 'Audio Only (MP3 / M4A)',
-      quality: 'Audio',
-      ext: 'm4a',
-      type: 'audio',
-      filesize: audioSize,
-      badge: 'Audio',
-      directUrl: yt.mp3
-    });
-  }
+
+  options.push({
+    id: 'audio_m4a_128',
+    group: 'audio',
+    label: 'M4A · 128 kbps',
+    quality: 'Audio',
+    resolutionTag: 'M4A',
+    ext: 'm4a',
+    type: 'audio',
+    filesize: aSize128,
+    badge: 'Audio',
+    directUrl: yt.mp3 || null
+  });
+
+  options.push({
+    id: 'audio_m4a_48',
+    group: 'audio',
+    label: 'M4A · 48 kbps',
+    quality: 'Audio',
+    resolutionTag: 'M4A',
+    ext: 'm4a',
+    type: 'audio',
+    filesize: aSize48,
+    badge: 'Audio',
+    directUrl: yt.mp3 || null
+  });
+
+  options.push({
+    id: 'best_audio',
+    group: 'audio',
+    label: 'MP3 · VBR',
+    quality: 'Audio',
+    resolutionTag: 'MP3',
+    ext: 'mp3',
+    type: 'audio',
+    filesize: mp3Size,
+    badge: 'Audio',
+    directUrl: null
+  });
 
   return {
     title: yt.title || 'YouTube Video',
@@ -203,7 +245,8 @@ async function fetchCloudYouTubeInfo(url) {
     like_count: null,
     comment_count: null,
     isServerless: true,
-    options
+    options,
+    subtitles: []
   };
 }
 
@@ -373,137 +416,147 @@ app.post('/api/info', async (req, res) => {
     });
   }
 
-  // On Vercel serverless, use fast cloud-native extractor first to avoid datacenter IP rate limits
-  if (IS_VERCEL) {
-    try {
-      const cloudData = await fetchCloudYouTubeInfo(trimmedUrl);
-      return res.json(cloudData);
-    } catch (cloudErr) {
-      console.warn('Cloud extractor fallback to yt-dlp:', cloudErr.message);
-    }
-  }
-
   try {
     const info = await runYtDlpJson(trimmedUrl);
     const rawFormats = Array.isArray(info.formats) ? info.formats : [];
+    const duration = info.duration || 0;
+
+    // Audio stream size (Format 140 / 128 kbps m4a)
+    const m4a140 = rawFormats.find(f => f.format_id === '140') ||
+                   rawFormats.find(f => f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none') && f.ext === 'm4a') ||
+                   rawFormats.find(f => f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none'));
+    
+    let audioBytes140 = m4a140 ? (m4a140.filesize || m4a140.filesize_approx) : 0;
+    if (!audioBytes140 && duration) {
+      audioBytes140 = Math.round((128 * 1000 / 8) * duration);
+    }
+
+    // Low bitrate audio (Format 249 / 48 kbps)
+    const m4a48 = rawFormats.find(f => f.format_id === '249' || f.format_id === '599' || (f.acodec && f.abr && f.abr <= 64));
+    let audioBytes48 = m4a48 ? (m4a48.filesize || m4a48.filesize_approx) : 0;
+    if (!audioBytes48 && duration) {
+      audioBytes48 = Math.round((48 * 1000 / 8) * duration);
+    }
+
+    // MP3 VBR estimate (~140 kbps)
+    const mp3Bytes = Math.round((140 * 1000 / 8) * duration);
+
+    const videoFormats = rawFormats.filter(f => f.vcodec && f.vcodec !== 'none' && f.height);
+    const combinedFormats = rawFormats.filter(f => f.vcodec && f.vcodec !== 'none' && f.acodec && f.acodec !== 'none' && f.url);
+
+    const standardHeights = [
+      { h: 2160, tag: '4K',  badge: 'Needs processing', defBitrate: 18000 },
+      { h: 1440, tag: '2K',  badge: 'Needs processing', defBitrate: 8000 },
+      { h: 1080, tag: 'FHD', badge: 'Needs processing', defBitrate: 2350 },
+      { h: 720,  tag: 'HD',  badge: 'HD',               defBitrate: 850 },
+      { h: 480,  tag: 'SD',  badge: 'Needs processing', defBitrate: 450 },
+      { h: 360,  tag: 'SD',  badge: 'SD',               defBitrate: 280 },
+      { h: 240,  tag: 'SD',  badge: 'Needs processing', defBitrate: 150 },
+      { h: 144,  tag: 'SD',  badge: 'Needs processing', defBitrate: 70 }
+    ];
+
     const options = [];
 
-    // Find best audio stream size for combined estimate
-    const audioFormats = rawFormats.filter(f => f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none'));
-    const bestAudio = audioFormats.sort((a, b) => (b.abr || 0) - (a.abr || 0))[0];
-    let audioBytes = bestAudio ? (bestAudio.filesize || bestAudio.filesize_approx || 0) : 0;
-    if (!audioBytes && info.duration) {
-      const audioKbps = (bestAudio && bestAudio.abr) ? bestAudio.abr : 128;
-      audioBytes = Math.round((audioKbps * 1000 / 8) * info.duration);
-    }
+    // Video Formats
+    for (const item of standardHeights) {
+      const candidates = videoFormats.filter(vf => vf.height === item.h);
+      if (!candidates.length) continue;
 
-    // Direct progressive combined formats
-    const combinedFormats = rawFormats
-      .filter(f => f.vcodec && f.vcodec !== 'none' && f.acodec && f.acodec !== 'none' && f.url && f.protocol && f.protocol.startsWith('http'))
-      .sort((a, b) => (b.height || 0) - (a.height || 0));
+      // Prefer format with avc1 / h264 that has filesize, matching ytdown.to exactly
+      const f = candidates.find(c => c.ext === 'mp4' && c.vcodec && c.vcodec.startsWith('avc1') && (c.filesize || c.filesize_approx)) ||
+                candidates.find(c => c.ext === 'mp4' && (c.filesize || c.filesize_approx)) ||
+                candidates.find(c => c.filesize || c.filesize_approx) ||
+                candidates[0];
 
-    // Standard target resolutions in order of user preference
-    const targetHeights = [1080, 720, 480, 360, 1440, 2160];
-    const seenHeights = new Set();
-    const videoFormats = rawFormats
-      .filter(f => f.vcodec && f.vcodec !== 'none' && f.height)
-      .sort((a, b) => {
-        const aMp4 = (a.ext === 'mp4' ? 1 : 0);
-        const bMp4 = (b.ext === 'mp4' ? 1 : 0);
-        return bMp4 - aMp4;
-      });
-
-    for (const targetH of targetHeights) {
-      const f = videoFormats.find(vf => vf.height === targetH);
-      if (f && !seenHeights.has(targetH)) {
-        seenHeights.add(targetH);
-        let vSize = f.filesize || f.filesize_approx || null;
-        if (!vSize && f.tbr && info.duration) {
-          vSize = Math.round((f.tbr * 1000 / 8) * info.duration);
-        } else if (!vSize && f.vbr && info.duration) {
-          const totalBitrate = f.vbr + (bestAudio?.abr || 128);
-          vSize = Math.round((totalBitrate * 1000 / 8) * info.duration);
-        } else if (!vSize && info.duration) {
-          const kbps = targetH >= 2160 ? 12000 : (targetH >= 1440 ? 6000 : (targetH >= 1080 ? 2400 : (targetH >= 720 ? 1200 : (targetH >= 480 ? 650 : 350))));
-          vSize = Math.round((kbps * 1000 / 8) * info.duration);
-        }
-
-        const hasAudio = f.acodec && f.acodec !== 'none';
-        const totalEstimate = vSize ? (hasAudio ? vSize : vSize + audioBytes) : null;
-        const matchingCombined = combinedFormats.find(cf => cf.height === targetH);
-
-        const isFHD = targetH >= 1080;
-        const isHD = targetH >= 720;
-        const badge = isFHD ? 'Needs processing' : (isHD ? 'HD' : 'SD');
-        const specLabel = isFHD ? 'FHD' : (isHD ? 'HD' : `${targetH}p`);
-
-        options.push({
-          id: `height_${targetH}`,
-          label: `${targetH}p Video (MP4)`,
-          quality: `${targetH}p`,
-          resolutionTag: specLabel,
-          ext: 'mp4',
-          type: 'video',
-          filesize: totalEstimate,
-          badge: badge,
-          directUrl: (IS_VERCEL && matchingCombined) ? matchingCombined.url : null
-        });
+      let vSize = f ? (f.filesize || f.filesize_approx) : 0;
+      if (!vSize && duration) {
+        vSize = Math.round((item.defBitrate * 1000 / 8) * duration);
       }
-    }
 
-    // Include any other remaining resolutions (e.g. non-standard heights)
-    for (const f of videoFormats) {
-      const h = f.height;
-      if (!seenHeights.has(h) && seenHeights.size < 6) {
-        seenHeights.add(h);
-        let vSize = f.filesize || f.filesize_approx || null;
-        if (!vSize && f.tbr && info.duration) {
-          vSize = Math.round((f.tbr * 1000 / 8) * info.duration);
-        }
-        const hasAudio = f.acodec && f.acodec !== 'none';
-        const totalEstimate = vSize ? (hasAudio ? vSize : vSize + audioBytes) : null;
-        const matchingCombined = combinedFormats.find(cf => cf.height === h);
+      const hasAudio = f && f.acodec && f.acodec !== 'none';
+      const totalSize = hasAudio ? vSize : (vSize + audioBytes140);
+      const matchingCombined = combinedFormats.find(cf => cf.height === item.h);
 
-        options.push({
-          id: `height_${h}`,
-          label: `${h}p Video (MP4)`,
-          quality: `${h}p`,
-          resolutionTag: `${h}p`,
-          ext: 'mp4',
-          type: 'video',
-          filesize: totalEstimate,
-          badge: h >= 720 ? 'HD' : 'SD',
-          directUrl: (IS_VERCEL && matchingCombined) ? matchingCombined.url : null
-        });
-      }
-    }
-
-    // Best Quality default option if not yet added
-    if (!options.length) {
       options.push({
-        id: 'best_mp4',
-        label: '1080p Video (MP4)',
-        quality: '1080p',
-        resolutionTag: 'FHD',
+        id: `height_${item.h}`,
+        group: 'video',
+        label: `${item.h}p · MP4`,
+        quality: `${item.h}p`,
+        resolutionTag: item.tag,
         ext: 'mp4',
         type: 'video',
-        badge: 'Needs processing',
-        directUrl: (IS_VERCEL && combinedFormats[0]) ? combinedFormats[0].url : null
+        filesize: totalSize,
+        badge: item.badge,
+        directUrl: (IS_VERCEL && matchingCombined) ? matchingCombined.url : null
       });
     }
 
-    // Audio Only Option
+    // Audio Formats
+    options.push({
+      id: 'audio_m4a_128',
+      group: 'audio',
+      label: 'M4A · 128 kbps',
+      quality: 'Audio',
+      resolutionTag: 'M4A',
+      ext: 'm4a',
+      type: 'audio',
+      filesize: audioBytes140,
+      badge: 'Audio',
+      directUrl: (IS_VERCEL && m4a140 && m4a140.url) ? m4a140.url : null
+    });
+
+    options.push({
+      id: 'audio_m4a_48',
+      group: 'audio',
+      label: 'M4A · 48 kbps',
+      quality: 'Audio',
+      resolutionTag: 'M4A',
+      ext: 'm4a',
+      type: 'audio',
+      filesize: audioBytes48,
+      badge: 'Audio',
+      directUrl: (IS_VERCEL && m4a48 && m4a48.url) ? m4a48.url : null
+    });
+
     options.push({
       id: 'best_audio',
-      label: 'Audio Only (MP3 / 320kbps)',
+      group: 'audio',
+      label: 'MP3 · VBR',
       quality: 'Audio',
       resolutionTag: 'MP3',
       ext: 'mp3',
       type: 'audio',
-      filesize: audioBytes || null,
+      filesize: mp3Bytes,
       badge: 'Audio',
-      directUrl: (IS_VERCEL && bestAudio && bestAudio.url && bestAudio.protocol && bestAudio.protocol.startsWith('http')) ? bestAudio.url : null
+      directUrl: null
     });
+
+    // Subtitles
+    const subtitles = [];
+    const rawSubs = info.subtitles || {};
+    const autoSubs = info.automatic_captions || {};
+    const subLangMap = {
+      'en': 'English', 'en-US': 'English (United States)', 'fi': 'Finnish', 'fr': 'French',
+      'fr-FR': 'French (France)', 'de': 'German', 'de-DE': 'German (Germany)', 'it': 'Italian',
+      'pt': 'Portuguese', 'pt-BR': 'Portuguese (Brazil)', 'ro': 'Romanian', 'es': 'Spanish',
+      'es-US': 'Spanish (United States)', 'es-ES': 'Spanish (Spain)', 'hi': 'Hindi', 'ur': 'Urdu',
+      'ar': 'Arabic', 'ru': 'Russian', 'ja': 'Japanese', 'ko': 'Korean', 'zh': 'Chinese'
+    };
+
+    const allSubKeys = Object.keys(rawSubs).length ? Object.keys(rawSubs) : Object.keys(autoSubs).slice(0, 10);
+    for (const code of allSubKeys) {
+      const list = rawSubs[code] || autoSubs[code] || [];
+      const vttOrSrt = list.find(s => s.ext === 'vtt' || s.ext === 'srt') || list[0];
+      const langName = subLangMap[code] || list[0]?.name || code;
+      if (vttOrSrt && subtitles.length < 12) {
+        subtitles.push({
+          id: `sub_${code}`,
+          code,
+          label: langName,
+          url: vttOrSrt.url
+        });
+      }
+    }
 
     res.json({
       title: info.title || info.fulltitle || 'YouTube Video',
@@ -520,10 +573,11 @@ app.post('/api/info', async (req, res) => {
       like_count: info.like_count || null,
       comment_count: info.comment_count || null,
       isServerless: IS_VERCEL,
-      options
+      options,
+      subtitles
     });
   } catch (err) {
-    console.error('Info error:', err.message);
+    console.error('Info error, falling back to cloud extractor:', err.message);
     try {
       const fallbackData = await fetchCloudYouTubeInfo(trimmedUrl);
       return res.json(fallbackData);
@@ -550,20 +604,22 @@ app.post('/api/start-download', async (req, res) => {
 
   const jobId = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const cleanTitle = sanitizeFilename(title || 'youtube_video');
-  const isAudio = type === 'audio' || format === 'best_audio';
+  const isAudio = type === 'audio' || format === 'best_audio' || format === 'audio_m4a_128' || format === 'audio_m4a_48';
   const ext = isAudio ? 'm4a' : 'mp4';
   const tempOutputTemplate = path.join(TEMP_DIR, `${jobId}.%(ext)s`);
 
-  let formatSelector = 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b';
-  if (isAudio) {
+  let formatSelector = 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b';
+  if (format === 'audio_m4a_128') {
+    formatSelector = 'ba[format_id=140]/ba[ext=m4a]/ba';
+  } else if (format === 'audio_m4a_48') {
+    formatSelector = 'ba[format_id=249]/ba[abr<=64]/ba';
+  } else if (isAudio) {
     formatSelector = 'ba[ext=m4a]/ba/b';
+  } else if (format && format.startsWith('height_')) {
+    const h = parseInt(format.replace('height_', ''), 10);
+    formatSelector = `bv*[height<=${h}][ext=mp4]+ba[ext=m4a]/bv*[height<=${h}]+ba/b[height<=${h}]/bv*+ba/b`;
   } else if (format && format !== 'best_mp4') {
-    if (format.startsWith('height_')) {
-      const h = parseInt(format.replace('height_', ''), 10);
-      formatSelector = `bv*[height<=${h}][ext=mp4]+ba[ext=m4a]/b[height<=${h}][ext=mp4]/bv*[height<=${h}]+ba/b[height<=${h}]/bv*+ba/b`;
-    } else {
-      formatSelector = `${format}+ba[ext=m4a]/${format}+ba/${format}/bv*+ba/b`;
-    }
+    formatSelector = `${format}+ba[ext=m4a]/${format}+ba/${format}/bv*+ba/b`;
   }
 
   const args = [
