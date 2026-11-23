@@ -46,7 +46,6 @@
         <a href="#downloader" class="nav-link active">Downloader</a>
         <a href="#features" class="nav-link">Features</a>
         <a href="#how-it-works" class="nav-link">How It Works</a>
-        <a href="#history-section" class="nav-link">Recent</a>
       </nav>
 
       <div class="nav-actions">
@@ -80,6 +79,10 @@
       <div class="app-card">
         <div class="card-header">
           <h1 class="card-title">Download a YouTube video</h1>
+          <span class="card-quality-pill">
+            <span class="pill-spark"></span>
+            1080p FHD • Shorts • MP3
+          </span>
         </div>
 
         <!-- Search / Link Input Box -->
@@ -218,6 +221,12 @@
             <!-- Selected Format Trigger Header -->
             <button type="button" id="format-select-trigger" class="format-select-header" aria-expanded="false" title="Click to choose a different quality or Audio MP3">
               <div class="selected-format-display">
+                <span class="format-lead-icon" aria-hidden="true">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="23 7 16 12 23 17 23 7"></polygon>
+                    <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                  </svg>
+                </span>
                 <span id="selected-format-text" class="selected-label">1080p · MP4 · 274.73 MB</span>
               </div>
               <svg class="chevron-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -312,8 +321,13 @@
 
       <div class="platforms-grid">
         <div class="platform-card">
-          <div class="p-icon yt-bg">
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+          <div class="p-icon icon-hd">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="3" width="20" height="14" rx="2.5" ry="2.5"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+              <polygon points="10 7.5 15 10 10 12.5 10 7.5" fill="currentColor" stroke="none"></polygon>
+            </svg>
           </div>
           <h3>Full HD 1080p &amp; 720p</h3>
           <p>Download full-length YouTube videos in crystal-clear high definition with merged audio.</p>
@@ -321,38 +335,40 @@
         </div>
 
         <div class="platform-card">
-          <div class="p-icon yt-bg">
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M17.77 10.32l-1.2-.5-1.1-.47.66-1.07A5.02 5.02 0 0 0 14.88 4a5.08 5.08 0 0 0-5.11 5.06c0 .4.06.8.18 1.18l.33 1.05-1.04-.37A5.06 5.06 0 0 0 3.75 14a5.07 5.07 0 0 0 5.08 5.06c1.17 0 2.27-.4 3.16-1.11l1.15-.93-.52 1.41a5.08 5.08 0 0 0 4.77 3.32c2.8 0 5.08-2.27 5.08-5.06a5.04 5.04 0 0 0-4.7-5.37zM10 14.5v-5l4.5 2.5-4.5 2.5z"/>
+          <div class="p-icon icon-shorts">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="6" y="2" width="12" height="20" rx="2.8" ry="2.8"></rect>
+              <line x1="12" y1="18" x2="12.01" y2="18" stroke-width="2.5"></line>
+              <polygon points="10.5 8.5 15 11 10.5 13.5 10.5 8.5" fill="currentColor" stroke="none"></polygon>
             </svg>
           </div>
           <h3>YouTube Shorts Support</h3>
-          <p>Directly download portrait YouTube Shorts in original MP4 format without quality loss.</p>
+          <p>Directly download portrait YouTube Shorts in original HD MP4 format without quality loss.</p>
           <span class="p-formats">Shorts • Vertical MP4 • Original Audio</span>
         </div>
 
         <div class="platform-card">
-          <div class="p-icon yt-bg">
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <div class="p-icon icon-audio">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9 18V5l12-2v13"></path>
               <circle cx="6" cy="18" r="3"></circle>
               <circle cx="18" cy="16" r="3"></circle>
             </svg>
           </div>
-          <h3>MP3 &amp; M4A Audio Extraction</h3>
-          <p>Extract high-bitrate audio from YouTube songs, podcasts, and speeches with one click.</p>
-          <span class="p-formats">High Bitrate • MP3 / M4A</span>
+          <h3>MP3 &amp; M4A Audio</h3>
+          <p>Extract high-bitrate audio from YouTube songs, podcasts, and lectures with one click.</p>
+          <span class="p-formats">128 kbps M4A • MP3 VBR</span>
         </div>
 
         <div class="platform-card">
-          <div class="p-icon yt-bg">
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+          <div class="p-icon icon-chrome">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
             </svg>
           </div>
-          <h3>Fast &amp; Direct Downloads</h3>
-          <p>Real-time percentage progress bar with direct download delivery straight to your device.</p>
-          <span class="p-formats">Fast • Ad-Free • Clean</span>
+          <h3>Direct Chrome Stream</h3>
+          <p>Live FFmpeg muxing streams straight into Chrome's native Download Manager with zero disk delay.</p>
+          <span class="p-formats">Live Merge • Chrome Native • Clean</span>
         </div>
       </div>
     </section>
@@ -367,42 +383,40 @@
         <div class="step-card">
           <div class="step-num">01</div>
           <h3>Copy YouTube Link</h3>
-          <p>Open YouTube on your browser or app and copy the link of any video or Short you want to download.</p>
+          <p>Open YouTube on your browser or mobile app and copy the link of any video, Music track, or Short.</p>
         </div>
         <div class="step-card">
           <div class="step-num">02</div>
-          <h3>Paste &amp; Fetch</h3>
-          <p>Click the <strong>Paste</strong> button in the box above and click <strong>Download</strong> to inspect available formats.</p>
+          <h3>Paste &amp; Analyze</h3>
+          <p>Click <strong>Paste</strong> in the box above and press <strong>Download</strong> to inspect all available qualities.</p>
         </div>
         <div class="step-card">
           <div class="step-num">03</div>
-          <h3>Download Instantly</h3>
-          <p>Select your preferred quality (1080p, 720p, or Audio) and your browser will save the file directly.</p>
+          <h3>Save via Chrome</h3>
+          <p>Pick your resolution (1080p, 720p, or Audio) and download directly through Chrome's Download Manager.</p>
         </div>
       </div>
-    </section>
-
-    <!-- Recent Downloads History -->
-    <section id="history-section" class="section hidden">
-      <div class="section-header history-header">
-        <div>
-          <span class="section-tag">YOUR ACTIVITY</span>
-          <h2>Recent Downloads</h2>
-        </div>
-        <button id="clear-history-btn" class="text-btn">Clear History</button>
-      </div>
-      <div id="history-list" class="history-grid"></div>
     </section>
   </main>
 
   <footer class="footer">
     <div class="container footer-content">
-      <div class="footer-brand">
-        <span class="brand-name">SnapVids</span>
-        <p>Fast, Clean &amp; Free YouTube Video &amp; Shorts Downloader.</p>
+      <div class="footer-brand-wrap">
+        <div class="footer-logo-mini" aria-hidden="true">
+          <svg viewBox="0 0 64 64" width="28" height="28" xmlns="http://www.w3.org/2000/svg">
+            <rect x="0" y="0" width="64" height="64" rx="18" fill="#18181b"/>
+            <path d="M17 15.5C17 13.2 19.5 11.8 21.5 13L47.5 28.5C49.4 29.6 49.4 32.4 47.5 33.5L21.5 49C19.5 50.2 17 48.8 17 46.5V15.5Z" fill="#ef4444"/>
+            <path d="M28.5 23V37M23.5 32L28.5 37L33.5 32" stroke="#ffffff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path d="M21 51.5H43" stroke="#ffffff" stroke-width="3.4" stroke-linecap="round" opacity="0.92"/>
+          </svg>
+        </div>
+        <div class="footer-brand">
+          <span class="brand-name">SnapVids</span>
+          <p>Fast, Clean &amp; Free YouTube Video &amp; Shorts Downloader.</p>
+        </div>
       </div>
       <div class="footer-note">
-        <span>Supports YouTube Videos • YouTube Shorts • High-Bitrate Audio</span>
+        <span>YouTube Videos • YouTube Shorts • High-Bitrate Audio</span>
       </div>
     </div>
   </footer>

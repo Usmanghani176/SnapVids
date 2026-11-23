@@ -33,11 +33,13 @@ const statValComments = document.getElementById('stat-val-comments');
 // Format Selector Elements
 const formatControlsGroup = document.querySelector('.format-controls-group');
 const formatSelectTrigger = document.getElementById('format-select-trigger');
+const formatLeadIcon = document.querySelector('.format-lead-icon');
 const formatDropdownMenu = document.getElementById('format-dropdown-menu');
 const selectedFormatText = document.getElementById('selected-format-text');
 const activeTagBadge = document.getElementById('active-tag-badge');
 const activeSpecText = document.getElementById('active-spec-text');
 const primaryDownloadBtn = document.getElementById('primary-download-btn');
+const navLinks = document.querySelectorAll('.nav-link');
 
 const groupVideoContainer = document.getElementById('group-video-container');
 const groupVideoList = document.getElementById('group-video-list');
@@ -58,17 +60,16 @@ const resetAnotherBtn = document.getElementById('reset-another-btn');
 const copyLinkBtn = document.getElementById('copy-link-btn');
 const copyLinkText = document.getElementById('copy-link-text');
 
-// History Elements
-const historySection = document.getElementById('history-section');
-const historyList = document.getElementById('history-list');
-const clearHistoryBtn = document.getElementById('clear-history-btn');
-
 let activePollTimer = null;
+let fetchAbortController = null;
 let currentVideoData = null;
 let currentOriginalUrl = '';
 let currentSelectedOption = null;
 let isFetchingInfo = false;
 const defaultPageTitle = document.title;
+
+// Purge legacy history cache so nothing lingers in browser storage
+try { localStorage.removeItem('streamsave_history'); } catch {}
 
 // Theme Setup (Default: Light / Clean White)
 const savedTheme = localStorage.getItem('streamsave_theme') || 'light';
@@ -151,11 +152,96 @@ urlInput.addEventListener('paste', () => {
   }, 20);
 });
 
-clearBtn.addEventListener('click', () => {
+// Clear displayed video state, browser caches, and backend metadata cache
+function clearAllWebState({ focusInput = true, scrollToTop = false } = {}) {
+  if (fetchAbortController) {
+    try { fetchAbortController.abort(); } catch {}
+    fetchAbortController = null;
+  }
+  isFetchingInfo = false;
+  fetchBtn.disabled = false;
+  fetchBtn.querySelector('.btn-text').textContent = 'Download';
+
+  if (activePollTimer) {
+    clearInterval(activePollTimer);
+    activePollTimer = null;
+  }
+  document.title = defaultPageTitle;
+
+  currentVideoData = null;
+  currentOriginalUrl = '';
+  currentSelectedOption = null;
+
+  closeFormatDropdown();
+  groupVideoList.innerHTML = '';
+  groupAudioList.innerHTML = '';
+  selectedFormatText.textContent = '';
+  activeTagBadge.textContent = '';
+  activeTagBadge.className = 'status-badge';
+  activeSpecText.textContent = '';
+  primaryDownloadBtn.onclick = null;
+  primaryDownloadBtn.disabled = false;
+  primaryDownloadBtn.querySelector('.btn-label').textContent = 'Download';
+
+  resThumbnail.removeAttribute('src');
+  resDurationBadge.textContent = '00:00';
+  resShortsBadge.classList.add('hidden');
+  resTitle.textContent = '';
+  resUploader.textContent = '';
+  resDescription.textContent = '';
+  resDescription.classList.remove('expanded');
+  descToggleBtn.classList.add('hidden');
+  descToggleBtn.textContent = 'See more';
+  statValDuration.textContent = '00:00';
+  statValViews.textContent = '0';
+  statValLikes.textContent = '0';
+  statValComments.textContent = '0';
+  copyLinkText.textContent = 'Copy Video Link';
+
+  resultCard.classList.add('hidden');
+  loadingCard.classList.add('hidden');
+  downloadProgressNote.classList.add('hidden');
+  downloadProgressNote.classList.remove('completed');
+  downloadProgressBar.style.width = '0%';
+  downloadPercentBadge.textContent = '0%';
+  downloadProgressText.textContent = '';
+  downloadSizeInfo.textContent = '';
+  downloadSpeedInfo.textContent = '';
+  progressSpinner.classList.add('hidden');
+
   urlInput.value = '';
   syncInputActionButtons();
   hideAlert();
-  urlInput.focus();
+
+  navLinks.forEach((item, idx) => item.classList.toggle('active', idx === 0));
+
+  try {
+    sessionStorage.clear();
+    Object.keys(localStorage).forEach((key) => {
+      if (key !== 'streamsave_theme') {
+        localStorage.removeItem(key);
+      }
+    });
+  } catch {}
+
+  if ('caches' in window) {
+    caches.keys()
+      .then((keys) => Promise.all(keys.map((key) => caches.delete(key))))
+      .catch(() => {});
+  }
+
+  fetch('/api/clear-cache', { method: 'POST', keepalive: true }).catch(() => {});
+
+  if (scrollToTop) {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  if (focusInput) {
+    urlInput.focus();
+  }
+}
+
+clearBtn.addEventListener('click', () => {
+  clearAllWebState({ focusInput: true });
 });
 
 pasteBtn.addEventListener('click', async () => {
@@ -265,19 +351,15 @@ descToggleBtn.addEventListener('click', () => {
 
 // Reset Another Video Button
 resetAnotherBtn.addEventListener('click', () => {
-  if (activePollTimer) {
-    clearInterval(activePollTimer);
-    activePollTimer = null;
-  }
-  document.title = defaultPageTitle;
-  closeFormatDropdown();
-  resultCard.classList.add('hidden');
-  downloadProgressNote.classList.add('hidden');
-  urlInput.value = '';
-  syncInputActionButtons();
-  hideAlert();
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-  urlInput.focus();
+  clearAllWebState({ focusInput: true, scrollToTop: true });
+});
+
+// Switch active navbar pill on click
+navLinks.forEach((link) => {
+  link.addEventListener('click', () => {
+    navLinks.forEach((item) => item.classList.remove('active'));
+    link.classList.add('active');
+  });
 });
 
 // Copy Video Link Button
@@ -331,12 +413,14 @@ form.addEventListener('submit', async (e) => {
   isFetchingInfo = true;
   fetchBtn.disabled = true;
   fetchBtn.querySelector('.btn-text').textContent = 'Fetching...';
+  fetchAbortController = new AbortController();
 
   try {
     const response = await fetch('/api/info', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: normalizedUrl })
+      body: JSON.stringify({ url: normalizedUrl }),
+      signal: fetchAbortController.signal
     });
 
     const data = await response.json();
@@ -347,10 +431,11 @@ form.addEventListener('submit', async (e) => {
     currentVideoData = data;
     currentOriginalUrl = normalizedUrl;
     renderResult(data, normalizedUrl);
-    saveToHistory(data, normalizedUrl);
   } catch (err) {
+    if (err && err.name === 'AbortError') return;
     showAlert(err.message || 'Failed to fetch YouTube video. Please check the link and try again.');
   } finally {
+    fetchAbortController = null;
     isFetchingInfo = false;
     loadingCard.classList.add('hidden');
     fetchBtn.disabled = false;
@@ -449,9 +534,18 @@ function updateSelectedDisplay() {
 
   // Active Highlight Card meta:
   // e.g. [Needs processing] MP4 · FHD · 274.74 MB [↓ Download]
-  const badgeLabel = opt.badge || (opt.type === 'audio' ? 'Audio' : (opt.quality === '1080p' ? 'Needs processing' : 'HD'));
+  const isAudio = opt.type === 'audio';
+  const badgeLabel = opt.badge || (isAudio ? 'Audio' : (opt.quality === '1080p' ? 'Needs processing' : 'HD'));
+  const badgeVariant = isAudio
+    ? 'badge-audio'
+    : (/processing|merge/i.test(badgeLabel) ? '' : 'badge-hd');
+
   activeTagBadge.textContent = badgeLabel;
-  activeTagBadge.className = `status-badge ${opt.type === 'audio' ? 'audio' : ''}`;
+  activeTagBadge.className = badgeVariant ? `status-badge ${badgeVariant}` : 'status-badge';
+
+  if (formatLeadIcon) {
+    formatLeadIcon.style.color = isAudio ? '#10b981' : 'var(--accent-brand)';
+  }
 
   const resTag = opt.resolutionTag || (opt.quality === '1080p' ? 'FHD' : (opt.quality === '720p' ? 'HD' : opt.quality));
   if (opt.type === 'audio') {
@@ -544,7 +638,7 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
 
   // Show Status Card
   progressSpinner.classList.remove('hidden');
-  downloadProgressNote.classList.remove('hidden');
+  downloadProgressNote.classList.remove('hidden', 'completed');
   downloadProgressBar.style.width = '4%';
   downloadPercentBadge.textContent = '0%';
   downloadProgressText.textContent = `Preparing ${label} for Chrome Downloader...`;
@@ -583,6 +677,7 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
 
     if (!prepData.ticketId) {
       progressSpinner.classList.add('hidden');
+      downloadProgressNote.classList.add('completed');
       downloadProgressBar.style.width = '100%';
       downloadPercentBadge.textContent = 'Chrome';
       downloadProgressText.textContent = '⬇️ Downloading directly inside Chrome Downloads (Ctrl+J)!';
@@ -628,6 +723,7 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
           downloadProgressBar.style.width = '100%';
           downloadPercentBadge.textContent = '100%';
           progressSpinner.classList.add('hidden');
+          downloadProgressNote.classList.add('completed');
           downloadProgressText.textContent = '✅ 100% Complete! File downloaded via Chrome Downloader.';
           downloadSizeInfo.textContent = `Downloaded: ${formatBytes(sent || expected)}`;
           downloadSpeedInfo.textContent = 'Saved in Chrome Downloads (Ctrl+J)';
@@ -662,63 +758,4 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
   }
 }
 
-// Recent Downloads History (LocalStorage)
-function getHistory() {
-  try {
-    return JSON.parse(localStorage.getItem('streamsave_history') || '[]');
-  } catch {
-    return [];
-  }
-}
-
-function saveToHistory(data, url) {
-  const list = getHistory().filter(item => item.url !== url);
-  list.unshift({
-    title: data.title,
-    thumbnail: data.thumbnail ? `/api/thumbnail?url=${encodeURIComponent(data.thumbnail)}` : '',
-    url,
-    time: Date.now()
-  });
-  localStorage.setItem('streamsave_history', JSON.stringify(list.slice(0, 6)));
-  renderHistory();
-}
-
-function renderHistory() {
-  const list = getHistory();
-  if (!list.length) {
-    historySection.classList.add('hidden');
-    return;
-  }
-
-  historySection.classList.remove('hidden');
-  historyList.innerHTML = '';
-
-  list.forEach(item => {
-    const card = document.createElement('div');
-    card.className = 'history-item';
-    const fallbackImg = 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=200&auto=format&fit=crop&q=60';
-    card.innerHTML = `
-      <img class="history-thumb" src="${item.thumbnail || fallbackImg}" alt="thumb" onerror="this.src='${fallbackImg}'" />
-      <div class="history-info">
-        <div class="history-title" title="${item.title}">${item.title}</div>
-        <div class="history-meta">YouTube</div>
-      </div>
-      <button class="history-refetch" type="button">Fetch Again</button>
-    `;
-    card.querySelector('.history-refetch').addEventListener('click', () => {
-      urlInput.value = item.url;
-      syncInputActionButtons();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      form.requestSubmit();
-    });
-    historyList.appendChild(card);
-  });
-}
-
-clearHistoryBtn.addEventListener('click', () => {
-  localStorage.removeItem('streamsave_history');
-  renderHistory();
-});
-
 syncInputActionButtons();
-renderHistory();

@@ -1249,6 +1249,23 @@ app.get('/api/stream-status/:ticketId', (req, res) => {
   });
 });
 
+// Clear cached video metadata and finished stream tickets
+app.post('/api/clear-cache', (req, res) => {
+  const clearedInfo = infoCache.size;
+  infoCache.clear();
+
+  let clearedTickets = 0;
+  for (const [id, ticket] of streamTickets.entries()) {
+    if (ticket.status !== 'streaming') {
+      streamTickets.delete(id);
+      clearedTickets += 1;
+    }
+  }
+
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ ok: true, clearedInfo, clearedTickets });
+});
+
 if (!IS_VERCEL) {
   app.listen(PORT, () => {
     console.log(`Server is running at http://localhost:${PORT}`);
