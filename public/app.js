@@ -67,10 +67,10 @@ let activePollTimer = null;
 let currentVideoData = null;
 let currentOriginalUrl = '';
 let currentSelectedOption = null;
-let currentFormatFilter = 'all';
+let isFetchingInfo = false;
 const defaultPageTitle = document.title;
 
-// Theme Setup (Default: Light / White)
+// Theme Setup (Default: Light / Clean White)
 const savedTheme = localStorage.getItem('streamsave_theme') || 'light';
 document.documentElement.setAttribute('data-theme', savedTheme);
 
@@ -81,7 +81,7 @@ themeToggle.addEventListener('click', () => {
   localStorage.setItem('streamsave_theme', next);
 });
 
-// Check engine status
+// Check backend engine readiness
 async function checkEngineStatus() {
   try {
     const res = await fetch('/api/status');
@@ -100,33 +100,60 @@ async function checkEngineStatus() {
 }
 checkEngineStatus();
 
-// Validate YouTube URL
-function isYouTubeUrl(urlStr) {
+// Extract & normalize YouTube URL from raw input or share text
+function extractYouTubeUrl(rawInput) {
+  if (!rawInput || typeof rawInput !== 'string') return null;
+  let str = rawInput.trim();
+
+  const urlMatch = str.match(/https?:\/\/[^\s"'<>]+/i);
+  if (urlMatch) {
+    str = urlMatch[0];
+  } else if (/^(www\.|m\.|music\.)?(youtube\.com|youtu\.be)\//i.test(str)) {
+    str = 'https://' + str;
+  }
+
   try {
-    const parsed = new URL(urlStr);
+    const parsed = new URL(str);
     const host = parsed.hostname.toLowerCase();
-    return (
+    const isYt =
       host === 'www.youtube.com' ||
       host === 'youtube.com' ||
       host === 'm.youtube.com' ||
       host === 'music.youtube.com' ||
-      host === 'youtu.be'
-    );
+      host === 'youtu.be';
+
+    return isYt ? parsed.href : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
-// Input actions
+// Toggle Clear vs Paste buttons depending on whether input has value
+function syncInputActionButtons() {
+  const hasValue = urlInput.value.trim().length > 0;
+  clearBtn.classList.toggle('hidden', !hasValue);
+  pasteBtn.classList.toggle('hidden', hasValue);
+}
+
 urlInput.addEventListener('input', () => {
-  const val = urlInput.value.trim();
-  clearBtn.classList.toggle('hidden', !val);
+  syncInputActionButtons();
   hideAlert();
+});
+
+// Auto-normalize when user pastes directly via Ctrl+V / context menu
+urlInput.addEventListener('paste', () => {
+  setTimeout(() => {
+    const extracted = extractYouTubeUrl(urlInput.value);
+    if (extracted) {
+      urlInput.value = extracted;
+    }
+    syncInputActionButtons();
+  }, 20);
 });
 
 clearBtn.addEventListener('click', () => {
   urlInput.value = '';
-  clearBtn.classList.add('hidden');
+  syncInputActionButtons();
   hideAlert();
   urlInput.focus();
 });
@@ -135,8 +162,13 @@ pasteBtn.addEventListener('click', async () => {
   try {
     const text = await navigator.clipboard.readText();
     if (text) {
-      urlInput.value = text.trim();
-      urlInput.dispatchEvent(new Event('input'));
+      const extracted = extractYouTubeUrl(text);
+      urlInput.value = extracted || text.trim();
+      syncInputActionButtons();
+      hideAlert();
+      if (extracted && !isFetchingInfo) {
+        form.requestSubmit();
+      }
     }
   } catch {
     urlInput.focus();
@@ -181,28 +213,51 @@ function formatNumber(num) {
   return String(num);
 }
 
+// Helper to close dropdown menu
+function closeFormatDropdown() {
+  if (!formatDropdownMenu) return;
+  formatDropdownMenu.classList.add('hidden');
+  formatSelectTrigger.classList.remove('active');
+  formatSelectTrigger.setAttribute('aria-expanded', 'false');
+  if (formatControlsGroup) {
+    formatControlsGroup.classList.remove('open');
+  }
+}
+
 // Format Dropdown Toggle
 formatSelectTrigger.addEventListener('click', (e) => {
   e.stopPropagation();
   const isHidden = formatDropdownMenu.classList.toggle('hidden');
-  formatSelectTrigger.classList.toggle('active', !isHidden);
+  const isOpen = !isHidden;
+  formatSelectTrigger.classList.toggle('active', isOpen);
+  formatSelectTrigger.setAttribute('aria-expanded', String(isOpen));
   if (formatControlsGroup) {
-    formatControlsGroup.classList.toggle('open', !isHidden);
+    formatControlsGroup.classList.toggle('open', isOpen);
   }
-});
-
-// Close dropdown when clicking outside
-document.addEventListener('click', (e) => {
-  if (formatDropdownMenu && !formatDropdownMenu.classList.contains('hidden')) {
-    if (!formatControlsGroup.contains(e.target)) {
-      formatDropdownMenu.classList.add('hidden');
-      formatSelectTrigger.classList.remove('active');
-      if (formatControlsGroup) formatControlsGroup.classList.remove('open');
+  if (isOpen) {
+    const activeItem = formatDropdownMenu.querySelector('.dropdown-item.selected');
+    if (activeItem) {
+      activeItem.scrollIntoView({ block: 'nearest' });
     }
   }
 });
 
-// Description "See more" Toggle
+// Close dropdown when clicking outside or pressing Escape
+document.addEventListener('click', (e) => {
+  if (formatDropdownMenu && !formatDropdownMenu.classList.contains('hidden')) {
+    if (!formatControlsGroup.contains(e.target)) {
+      closeFormatDropdown();
+    }
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeFormatDropdown();
+  }
+});
+
+// Description "See more / See less" Toggle
 descToggleBtn.addEventListener('click', () => {
   const isExpanded = resDescription.classList.toggle('expanded');
   descToggleBtn.textContent = isExpanded ? 'See less' : 'See more';
@@ -210,16 +265,22 @@ descToggleBtn.addEventListener('click', () => {
 
 // Reset Another Video Button
 resetAnotherBtn.addEventListener('click', () => {
+  if (activePollTimer) {
+    clearInterval(activePollTimer);
+    activePollTimer = null;
+  }
+  document.title = defaultPageTitle;
+  closeFormatDropdown();
   resultCard.classList.add('hidden');
   downloadProgressNote.classList.add('hidden');
   urlInput.value = '';
-  clearBtn.classList.add('hidden');
+  syncInputActionButtons();
   hideAlert();
   window.scrollTo({ top: 0, behavior: 'smooth' });
   urlInput.focus();
 });
 
-// Copy Link Button
+// Copy Video Link Button
 copyLinkBtn.addEventListener('click', async () => {
   if (!currentOriginalUrl) return;
   try {
@@ -236,22 +297,28 @@ copyLinkBtn.addEventListener('click', async () => {
   }
 });
 
-// Form Submission
+// Form Submission (Fetch Video Info)
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const url = urlInput.value.trim();
+  if (isFetchingInfo) return;
 
-  if (!url) {
+  const rawVal = urlInput.value.trim();
+  if (!rawVal) {
     showAlert('Please paste a YouTube video or Shorts link first.');
     return;
   }
 
-  if (!isYouTubeUrl(url)) {
+  const normalizedUrl = extractYouTubeUrl(rawVal);
+  if (!normalizedUrl) {
     showAlert('Please enter a valid YouTube link (e.g. https://youtu.be/... or https://youtube.com/watch?v=...).');
     return;
   }
 
+  urlInput.value = normalizedUrl;
+  syncInputActionButtons();
   hideAlert();
+  closeFormatDropdown();
+
   if (activePollTimer) {
     clearInterval(activePollTimer);
     activePollTimer = null;
@@ -260,6 +327,8 @@ form.addEventListener('submit', async (e) => {
   resultCard.classList.add('hidden');
   downloadProgressNote.classList.add('hidden');
   loadingCard.classList.remove('hidden');
+
+  isFetchingInfo = true;
   fetchBtn.disabled = true;
   fetchBtn.querySelector('.btn-text').textContent = 'Fetching...';
 
@@ -267,7 +336,7 @@ form.addEventListener('submit', async (e) => {
     const response = await fetch('/api/info', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
+      body: JSON.stringify({ url: normalizedUrl })
     });
 
     const data = await response.json();
@@ -276,12 +345,13 @@ form.addEventListener('submit', async (e) => {
     }
 
     currentVideoData = data;
-    currentOriginalUrl = url;
-    renderResult(data, url);
-    saveToHistory(data, url);
+    currentOriginalUrl = normalizedUrl;
+    renderResult(data, normalizedUrl);
+    saveToHistory(data, normalizedUrl);
   } catch (err) {
     showAlert(err.message || 'Failed to fetch YouTube video. Please check the link and try again.');
   } finally {
+    isFetchingInfo = false;
     loadingCard.classList.add('hidden');
     fetchBtn.disabled = false;
     fetchBtn.querySelector('.btn-text').textContent = 'Download';
@@ -304,14 +374,14 @@ function renderResult(data, originalUrl) {
   statValDuration.textContent = durStr;
 
   // Detect Shorts
-  const isShort = (originalUrl.includes('/shorts/') || (data.duration && data.duration <= 60));
+  const isShort = originalUrl.includes('/shorts/') || (data.duration && data.duration <= 60);
   resShortsBadge.classList.toggle('hidden', !isShort);
 
-  // Uploader & Title
+  // Channel & Title
   resUploader.textContent = data.channel || data.uploader || 'YouTube Channel';
   resTitle.textContent = data.title || 'YouTube Video';
 
-  // Description & See more button
+  // Description & See more toggle
   const desc = (data.description || '').trim();
   if (desc) {
     resDescription.textContent = desc;
@@ -319,7 +389,7 @@ function renderResult(data, originalUrl) {
     descToggleBtn.textContent = 'See more';
     descToggleBtn.classList.toggle('hidden', desc.length <= 110);
   } else {
-    resDescription.textContent = 'Watch this video on YouTube in Full HD with crystal-clear audio.';
+    resDescription.textContent = 'Watch and download this YouTube video in Full HD with crystal-clear audio.';
     descToggleBtn.classList.add('hidden');
   }
 
@@ -348,27 +418,24 @@ function renderResult(data, originalUrl) {
     statPillComments.classList.add('hidden');
   }
 
-  // Set default selection to 1080p if available, else 720p or first option
+  // Set default selection to 1080p if available, else 720p or first available option
   const options = data.options || [];
-  const defaultOpt = options.find(o => o.quality === '1080p' || o.id === 'height_1080') ||
-                     options.find(o => o.quality === '720p' || o.id === 'height_720') ||
-                     options[0] || null;
+  const defaultOpt =
+    options.find(o => o.quality === '1080p' || o.id === 'height_1080') ||
+    options.find(o => o.quality === '720p' || o.id === 'height_720') ||
+    options[0] ||
+    null;
+
   currentSelectedOption = defaultOpt;
   updateSelectedDisplay();
-
-  // Reset dropdown menu to closed
-  formatDropdownMenu.classList.add('hidden');
-  formatSelectTrigger.classList.remove('active');
-  if (formatControlsGroup) {
-    formatControlsGroup.classList.remove('open');
-  }
+  closeFormatDropdown();
   renderOptionsList();
 
   resultCard.classList.remove('hidden');
   resultCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-// Update the Selected Format Display Bar and Highlight Card
+// Update the Selected Format Trigger Bar and Active Highlight Action Card
 function updateSelectedDisplay() {
   if (!currentSelectedOption) return;
 
@@ -377,18 +444,18 @@ function updateSelectedDisplay() {
   const sizePart = sizeText ? ` · ${sizeText}` : '';
   const extPart = (opt.ext || 'MP4').toUpperCase();
 
-  // Top Trigger Bar text: e.g. "1080p · MP4 · 274.73 MB"
+  // Top Trigger Bar text: e.g. "1080p · MP4 · 274.74 MB"
   selectedFormatText.textContent = `${opt.label || opt.quality}${sizePart}`;
 
   // Active Highlight Card meta:
-  // e.g. [Needs processing] MP4 · FHD · 274.73 MB [↓ Download]
+  // e.g. [Needs processing] MP4 · FHD · 274.74 MB [↓ Download]
   const badgeLabel = opt.badge || (opt.type === 'audio' ? 'Audio' : (opt.quality === '1080p' ? 'Needs processing' : 'HD'));
   activeTagBadge.textContent = badgeLabel;
   activeTagBadge.className = `status-badge ${opt.type === 'audio' ? 'audio' : ''}`;
 
-  let resTag = opt.resolutionTag || (opt.quality === '1080p' ? 'FHD' : (opt.quality === '720p' ? 'HD' : opt.quality));
+  const resTag = opt.resolutionTag || (opt.quality === '1080p' ? 'FHD' : (opt.quality === '720p' ? 'HD' : opt.quality));
   if (opt.type === 'audio') {
-    activeSpecText.textContent = `${extPart} · ${opt.resolutionTag || 'Audio'}${sizePart}`;
+    activeSpecText.textContent = `${extPart} · ${opt.quality || opt.resolutionTag || 'Audio'}${sizePart}`;
   } else {
     activeSpecText.textContent = `${extPart} · ${resTag}${sizePart}`;
   }
@@ -399,61 +466,50 @@ function updateSelectedDisplay() {
   };
 }
 
-// Render dynamic format options list grouped by Video and Audio (matching ytdown.to)
+// Render dynamic format options list grouped by Video and Audio
 function renderOptionsList() {
   if (!currentVideoData || !currentVideoData.options) return;
 
   groupVideoList.innerHTML = '';
   groupAudioList.innerHTML = '';
 
-  // 1. Video Options
-  const videoOpts = currentVideoData.options.filter(o => o.type === 'video');
-  videoOpts.forEach(opt => {
+  const createOptionItem = (opt) => {
     const isSelected = currentSelectedOption && currentSelectedOption.id === opt.id;
     const sizeStr = opt.filesize ? formatBytes(opt.filesize) : '';
 
     const item = document.createElement('div');
     item.className = `dropdown-item ${isSelected ? 'selected' : ''}`;
     item.innerHTML = `
-      <span>${opt.label}</span>
-      ${sizeStr ? `<span class="item-sub-tag">${sizeStr}</span>` : ''}
+      <span>${opt.label}${sizeStr ? ` · ${sizeStr}` : ''}</span>
+      <span class="item-sub-tag">${opt.resolutionTag || opt.quality || ''}</span>
     `;
 
     item.addEventListener('click', () => {
       currentSelectedOption = opt;
       updateSelectedDisplay();
       renderOptionsList();
-      formatDropdownMenu.classList.add('hidden');
-      formatSelectTrigger.classList.remove('active');
-      if (formatControlsGroup) formatControlsGroup.classList.remove('open');
+      closeFormatDropdown();
     });
 
-    groupVideoList.appendChild(item);
+    return item;
+  };
+
+  // 1. Video Options
+  const videoOpts = currentVideoData.options.filter(o => o.type === 'video');
+  if (groupVideoContainer) {
+    groupVideoContainer.classList.toggle('hidden', videoOpts.length === 0);
+  }
+  videoOpts.forEach(opt => {
+    groupVideoList.appendChild(createOptionItem(opt));
   });
 
   // 2. Audio Options
   const audioOpts = currentVideoData.options.filter(o => o.type === 'audio');
+  if (groupAudioContainer) {
+    groupAudioContainer.classList.toggle('hidden', audioOpts.length === 0);
+  }
   audioOpts.forEach(opt => {
-    const isSelected = currentSelectedOption && currentSelectedOption.id === opt.id;
-    const sizeStr = opt.filesize ? formatBytes(opt.filesize) : '';
-
-    const item = document.createElement('div');
-    item.className = `dropdown-item ${isSelected ? 'selected' : ''}`;
-    item.innerHTML = `
-      <span>${opt.label}</span>
-      ${sizeStr ? `<span class="item-sub-tag">${sizeStr}</span>` : ''}
-    `;
-
-    item.addEventListener('click', () => {
-      currentSelectedOption = opt;
-      updateSelectedDisplay();
-      renderOptionsList();
-      formatDropdownMenu.classList.add('hidden');
-      formatSelectTrigger.classList.remove('active');
-      if (formatControlsGroup) formatControlsGroup.classList.remove('open');
-    });
-
-    groupAudioList.appendChild(item);
+    groupAudioList.appendChild(createOptionItem(opt));
   });
 }
 
@@ -476,6 +532,8 @@ function triggerDownloadForOption(opt) {
 // Download Process with Live Progress
 async function startTrackedDownload({ url, format, type, title, label, ext, directUrl, isServerless }) {
   hideAlert();
+  closeFormatDropdown();
+
   if (activePollTimer) {
     clearInterval(activePollTimer);
     activePollTimer = null;
@@ -494,7 +552,7 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
   downloadSpeedInfo.textContent = '';
   downloadProgressNote.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
-  // Cloud / Direct Stream Download (Single Request)
+  // Cloud / Direct Stream Download (Single Request with ReadableStream byte tracking)
   if (isServerless || directUrl) {
     try {
       const targetEndpoint = directUrl
@@ -503,8 +561,8 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
 
       let fakePct = 5;
       activePollTimer = setInterval(() => {
-        if (fakePct < 92) {
-          fakePct += Math.max(1, Math.round((95 - fakePct) * 0.12));
+        if (fakePct < 90) {
+          fakePct += Math.max(1, Math.round((92 - fakePct) * 0.1));
           downloadProgressBar.style.width = `${fakePct}%`;
           downloadPercentBadge.textContent = `${fakePct}%`;
           downloadProgressText.textContent = `Processing YouTube Stream... ${fakePct}%`;
@@ -519,11 +577,40 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
         throw new Error(errText || 'Failed to download YouTube video.');
       }
 
-      const blob = await response.blob();
-      clearInterval(activePollTimer);
-      activePollTimer = null;
-      document.title = defaultPageTitle;
+      const contentLength = parseInt(response.headers.get('Content-Length') || '0', 10);
+      let blob;
 
+      if (response.body && contentLength > 0) {
+        clearInterval(activePollTimer);
+        activePollTimer = null;
+
+        const reader = response.body.getReader();
+        const chunks = [];
+        let receivedLength = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          receivedLength += value.length;
+          const pct = Math.min(99, Math.round((receivedLength / contentLength) * 100));
+          downloadProgressBar.style.width = `${pct}%`;
+          downloadPercentBadge.textContent = `${pct}%`;
+          downloadProgressText.textContent = `Downloading Stream... ${pct}%`;
+          downloadSizeInfo.textContent = `${formatBytes(receivedLength)} / ${formatBytes(contentLength)}`;
+          primaryDownloadBtn.querySelector('.btn-label').textContent = `${pct}%`;
+          document.title = `(${pct}%) Downloading — SnapVids`;
+        }
+        blob = new Blob(chunks);
+      } else {
+        blob = await response.blob();
+        if (activePollTimer) {
+          clearInterval(activePollTimer);
+          activePollTimer = null;
+        }
+      }
+
+      document.title = defaultPageTitle;
       downloadProgressBar.style.width = '100%';
       downloadPercentBadge.textContent = '100%';
       progressSpinner.classList.add('hidden');
@@ -537,7 +624,8 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
       const a = document.createElement('a');
       a.href = blobUrl;
       const safeName = (title || 'youtube_video').replace(/[<>:"/\\|?*]/g, '').trim().slice(0, 90) || 'youtube_video';
-      a.download = `${safeName}.${type === 'audio' ? 'm4a' : (ext || 'mp4')}`;
+      const fileExt = ext || (type === 'audio' ? 'm4a' : 'mp4');
+      a.download = `${safeName}.${fileExt}`;
       document.body.appendChild(a);
       a.click();
       setTimeout(() => {
@@ -676,7 +764,7 @@ function renderHistory() {
     `;
     card.querySelector('.history-refetch').addEventListener('click', () => {
       urlInput.value = item.url;
-      urlInput.dispatchEvent(new Event('input'));
+      syncInputActionButtons();
       window.scrollTo({ top: 0, behavior: 'smooth' });
       form.requestSubmit();
     });
@@ -689,4 +777,5 @@ clearHistoryBtn.addEventListener('click', () => {
   renderHistory();
 });
 
+syncInputActionButtons();
 renderHistory();

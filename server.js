@@ -16,7 +16,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Path configuration (writable /tmp directory for serverless, local dir for normal execution)
+// Writable directory setup (/tmp on Vercel serverless, project root locally)
 const BASE_WRITABLE_DIR = IS_VERCEL ? '/tmp' : __dirname;
 const BIN_DIR = path.join(BASE_WRITABLE_DIR, 'bin');
 const YT_DLP_PATH = path.join(BIN_DIR, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
@@ -27,26 +27,43 @@ if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 let isBinaryReady = IS_VERCEL;
 let binaryDownloadPromise = null;
-const downloadJobs = new Map();
 
-// Helper: Verify YouTube URL
-function isYouTubeUrl(urlStr) {
+// Active download jobs & metadata cache
+const downloadJobs = new Map();
+const infoCache = new Map();
+const INFO_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+// Helper: Extract and normalize YouTube URL from raw input or share text
+function normalizeYouTubeUrl(rawInput) {
+  if (!rawInput || typeof rawInput !== 'string') return null;
+  let str = rawInput.trim();
+
+  // Extract URL if embedded in share text (e.g. "Watch this: https://youtu.be/...")
+  const urlMatch = str.match(/https?:\/\/[^\s"'<>]+/i);
+  if (urlMatch) {
+    str = urlMatch[0];
+  } else if (/^(www\.|m\.|music\.)?(youtube\.com|youtu\.be)\//i.test(str)) {
+    str = 'https://' + str;
+  }
+
   try {
-    const parsed = new URL(urlStr);
+    const parsed = new URL(str);
     const host = parsed.hostname.toLowerCase();
-    return (
+    const isYt =
       host === 'www.youtube.com' ||
       host === 'youtube.com' ||
       host === 'm.youtube.com' ||
       host === 'music.youtube.com' ||
-      host === 'youtu.be'
-    );
+      host === 'youtu.be';
+
+    if (!isYt) return null;
+    return parsed.href;
   } catch {
-    return false;
+    return null;
   }
 }
 
-// Helper: Sanitize Filename
+// Helper: Sanitize filename for safe OS & HTTP header usage
 function sanitizeFilename(name) {
   return (name || 'youtube_video')
     .replace(/[<>:"/\\|?*\x00-\x1F]/g, '')
@@ -55,7 +72,36 @@ function sanitizeFilename(name) {
     .slice(0, 100) || 'youtube_video';
 }
 
-// Download yt-dlp binary with proper permissions
+// Periodic cleanup of old temp files and finished jobs (every 10 minutes)
+function cleanupTempFiles() {
+  const now = Date.now();
+  const maxAgeMs = 30 * 60 * 1000; // 30 minutes
+
+  for (const [jobId, job] of downloadJobs.entries()) {
+    if (now - job.createdAt > maxAgeMs) {
+      if (job.filePath && fs.existsSync(job.filePath)) {
+        try { fs.unlinkSync(job.filePath); } catch {}
+      }
+      downloadJobs.delete(jobId);
+    }
+  }
+
+  try {
+    const files = fs.readdirSync(TEMP_DIR);
+    for (const file of files) {
+      const fullPath = path.join(TEMP_DIR, file);
+      try {
+        const stats = fs.statSync(fullPath);
+        if (now - stats.mtimeMs > maxAgeMs) {
+          fs.unlinkSync(fullPath);
+        }
+      } catch {}
+    }
+  } catch {}
+}
+setInterval(cleanupTempFiles, 10 * 60 * 1000).unref();
+
+// Atomic binary downloader with executable permissions
 function downloadFileAtomic(url, dest) {
   const tempDest = `${dest}.downloading_${Date.now()}`;
   return new Promise((resolve, reject) => {
@@ -95,7 +141,7 @@ function downloadFileAtomic(url, dest) {
   });
 }
 
-// Ensure yt-dlp binary exists
+// Ensure yt-dlp binary is present and executable
 async function ensureYtDlp() {
   if (fs.existsSync(YT_DLP_PATH)) {
     try {
@@ -140,7 +186,7 @@ if (!IS_VERCEL) {
   ensureYtDlp().catch(() => {});
 }
 
-// Parse query params (e.g. clen, dur) from video URLs
+// Parse query parameter from media stream URLs
 function parseQueryParam(urlStr, paramName) {
   try {
     const decoded = decodeURIComponent(urlStr);
@@ -159,7 +205,7 @@ async function fetchCloudYouTubeInfo(url) {
   }
 
   const rawDur = parseQueryParam(yt.mp4 || yt.mp3 || '', 'dur');
-  const dur = rawDur ? parseFloat(rawDur) : 929;
+  const dur = rawDur ? parseFloat(rawDur) : 300;
 
   const aSize128 = Math.round((128 * 1000 / 8) * dur);
   const aSize48 = Math.round((48 * 1000 / 8) * dur);
@@ -195,7 +241,7 @@ async function fetchCloudYouTubeInfo(url) {
     id: 'audio_m4a_128',
     group: 'audio',
     label: 'M4A · 128 kbps',
-    quality: 'Audio',
+    quality: '128 kbps',
     resolutionTag: 'M4A',
     ext: 'm4a',
     type: 'audio',
@@ -208,7 +254,7 @@ async function fetchCloudYouTubeInfo(url) {
     id: 'audio_m4a_48',
     group: 'audio',
     label: 'M4A · 48 kbps',
-    quality: 'Audio',
+    quality: '48 kbps',
     resolutionTag: 'M4A',
     ext: 'm4a',
     type: 'audio',
@@ -221,7 +267,7 @@ async function fetchCloudYouTubeInfo(url) {
     id: 'best_audio',
     group: 'audio',
     label: 'MP3 · VBR',
-    quality: 'Audio',
+    quality: 'VBR',
     resolutionTag: 'MP3',
     ext: 'mp3',
     type: 'audio',
@@ -298,7 +344,54 @@ function runYtDlpJson(url) {
   });
 }
 
-// Status check endpoint
+// Build yt-dlp format selector and CLI arguments for a given format ID
+function buildYtDlpDownloadArgs({ url, format, type, tempOutputTemplate }) {
+  const isMp3Conversion = format === 'best_audio';
+  const isAudio = type === 'audio' || isMp3Conversion || format === 'audio_m4a_128' || format === 'audio_m4a_48';
+
+  let formatSelector = 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b';
+  if (format === 'audio_m4a_128') {
+    formatSelector = 'ba[format_id=140]/ba[ext=m4a]/ba/b';
+  } else if (format === 'audio_m4a_48') {
+    formatSelector = 'ba[format_id=249]/ba[format_id=599]/ba[abr<=64]/ba/b';
+  } else if (isAudio) {
+    formatSelector = 'ba[ext=m4a]/ba/b';
+  } else if (format && format.startsWith('height_')) {
+    const h = parseInt(format.replace('height_', ''), 10);
+    formatSelector = `bv*[height<=${h}][ext=mp4]+ba[ext=m4a]/bv*[height<=${h}]+ba/b[height<=${h}]/bv*+ba/b`;
+  } else if (format && format !== 'best_mp4') {
+    formatSelector = `${format}+ba[ext=m4a]/${format}+ba/${format}/bv*+ba/b`;
+  }
+
+  const args = [
+    '--js-runtimes', 'node',
+    '--newline',
+    '--progress',
+    '-f', formatSelector,
+    '--no-playlist',
+    '--no-warnings',
+    '--no-check-certificates',
+    '--geo-bypass',
+    '-o', tempOutputTemplate
+  ];
+
+  const hasFfmpeg = ffmpegPath && fs.existsSync(ffmpegPath);
+  if (hasFfmpeg) {
+    args.push('--ffmpeg-location', ffmpegPath);
+    if (isMp3Conversion) {
+      args.push('-x', '--audio-format', 'mp3', '--audio-quality', '0');
+    } else if (!isAudio) {
+      args.push('--merge-output-format', 'mp4');
+    }
+  }
+
+  args.push(url);
+  const expectedExt = isMp3Conversion && hasFfmpeg ? 'mp3' : (isAudio ? 'm4a' : 'mp4');
+
+  return { args, isAudio, expectedExt };
+}
+
+// Engine status endpoint
 app.get('/api/status', (req, res) => {
   res.json({
     ready: isBinaryReady,
@@ -306,7 +399,7 @@ app.get('/api/status', (req, res) => {
   });
 });
 
-// Thumbnail proxy to bypass hotlink protection & CORS
+// Thumbnail proxy to avoid CORS / hotlink blocks
 app.get('/api/thumbnail', (req, res) => {
   const imageUrl = req.query.url;
   if (!imageUrl) return res.status(400).send('Missing image URL');
@@ -401,22 +494,25 @@ app.get('/api/proxy-download', (req, res) => {
   streamUrl(directUrl);
 });
 
-// Fetch YouTube video metadata & available quality options
+// Fetch YouTube video metadata & available Video / Audio quality options
 app.post('/api/info', async (req, res) => {
   const { url } = req.body;
-  if (!url || typeof url !== 'string') {
-    return res.status(400).json({ error: 'Please enter a valid YouTube video or Shorts link.' });
-  }
+  const normalizedUrl = normalizeYouTubeUrl(url);
 
-  const trimmedUrl = url.trim();
-  if (!isYouTubeUrl(trimmedUrl)) {
+  if (!normalizedUrl) {
     return res.status(400).json({
-      error: 'Only YouTube links are supported (e.g., https://youtu.be/... or https://youtube.com/watch?v=...).'
+      error: 'Please enter a valid YouTube link (e.g., https://youtu.be/... or https://youtube.com/watch?v=...).'
     });
   }
 
+  // Check in-memory cache first for instant response
+  const cached = infoCache.get(normalizedUrl);
+  if (cached && Date.now() - cached.timestamp < INFO_CACHE_TTL_MS) {
+    return res.json(cached.data);
+  }
+
   try {
-    const info = await runYtDlpJson(trimmedUrl);
+    const info = await runYtDlpJson(normalizedUrl);
     const rawFormats = Array.isArray(info.formats) ? info.formats : [];
     const duration = info.duration || 0;
 
@@ -424,7 +520,7 @@ app.post('/api/info', async (req, res) => {
     const m4a140 = rawFormats.find(f => f.format_id === '140') ||
                    rawFormats.find(f => f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none') && f.ext === 'm4a') ||
                    rawFormats.find(f => f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none'));
-    
+
     let audioBytes140 = m4a140 ? (m4a140.filesize || m4a140.filesize_approx) : 0;
     if (!audioBytes140 && duration) {
       audioBytes140 = Math.round((128 * 1000 / 8) * duration);
@@ -456,12 +552,12 @@ app.post('/api/info', async (req, res) => {
 
     const options = [];
 
-    // Video Formats
+    // 1. Video Formats
     for (const item of standardHeights) {
       const candidates = videoFormats.filter(vf => vf.height === item.h);
       if (!candidates.length) continue;
 
-      // Prefer format with avc1 / h264 that has filesize, matching ytdown.to exactly
+      // Prefer AVC1/H.264 MP4 stream with exact filesize
       const f = candidates.find(c => c.ext === 'mp4' && c.vcodec && c.vcodec.startsWith('avc1') && (c.filesize || c.filesize_approx)) ||
                 candidates.find(c => c.ext === 'mp4' && (c.filesize || c.filesize_approx)) ||
                 candidates.find(c => c.filesize || c.filesize_approx) ||
@@ -490,12 +586,12 @@ app.post('/api/info', async (req, res) => {
       });
     }
 
-    // Audio Formats
+    // 2. Audio Formats
     options.push({
       id: 'audio_m4a_128',
       group: 'audio',
       label: 'M4A · 128 kbps',
-      quality: 'Audio',
+      quality: '128 kbps',
       resolutionTag: 'M4A',
       ext: 'm4a',
       type: 'audio',
@@ -508,7 +604,7 @@ app.post('/api/info', async (req, res) => {
       id: 'audio_m4a_48',
       group: 'audio',
       label: 'M4A · 48 kbps',
-      quality: 'Audio',
+      quality: '48 kbps',
       resolutionTag: 'M4A',
       ext: 'm4a',
       type: 'audio',
@@ -521,7 +617,7 @@ app.post('/api/info', async (req, res) => {
       id: 'best_audio',
       group: 'audio',
       label: 'MP3 · VBR',
-      quality: 'Audio',
+      quality: 'VBR',
       resolutionTag: 'MP3',
       ext: 'mp3',
       type: 'audio',
@@ -530,7 +626,7 @@ app.post('/api/info', async (req, res) => {
       directUrl: null
     });
 
-    res.json({
+    const responsePayload = {
       title: info.title || info.fulltitle || 'YouTube Video',
       uploader: info.uploader || info.channel || info.creator || 'YouTube Creator',
       channel: info.channel || info.uploader || info.creator || 'YouTube Creator',
@@ -538,7 +634,7 @@ app.post('/api/info', async (req, res) => {
       duration: info.duration || 0,
       duration_string: info.duration_string || '',
       thumbnail: info.thumbnail || (info.thumbnails && info.thumbnails.length ? info.thumbnails[info.thumbnails.length - 1].url : ''),
-      webpage_url: info.webpage_url || trimmedUrl,
+      webpage_url: info.webpage_url || normalizedUrl,
       platform: 'youtube',
       extractor: 'YouTube',
       view_count: info.view_count || null,
@@ -546,11 +642,15 @@ app.post('/api/info', async (req, res) => {
       comment_count: info.comment_count || null,
       isServerless: IS_VERCEL,
       options
-    });
+    };
+
+    infoCache.set(normalizedUrl, { timestamp: Date.now(), data: responsePayload });
+    res.json(responsePayload);
   } catch (err) {
     console.error('Info error, falling back to cloud extractor:', err.message);
     try {
-      const fallbackData = await fetchCloudYouTubeInfo(trimmedUrl);
+      const fallbackData = await fetchCloudYouTubeInfo(normalizedUrl);
+      infoCache.set(normalizedUrl, { timestamp: Date.now(), data: fallbackData });
       return res.json(fallbackData);
     } catch {
       res.status(500).json({
@@ -560,10 +660,11 @@ app.post('/api/info', async (req, res) => {
   }
 });
 
-// Start a tracked download job (yt-dlp with live progress & ffmpeg merging)
+// Start a tracked download job (yt-dlp with monotonic live progress & FFmpeg merging)
 app.post('/api/start-download', async (req, res) => {
   const { url, format, title, type } = req.body;
-  if (!url || !isYouTubeUrl(url)) {
+  const normalizedUrl = normalizeYouTubeUrl(url);
+  if (!normalizedUrl) {
     return res.status(400).json({ error: 'Valid YouTube URL is required' });
   }
 
@@ -575,55 +676,26 @@ app.post('/api/start-download', async (req, res) => {
 
   const jobId = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const cleanTitle = sanitizeFilename(title || 'youtube_video');
-  const isAudio = type === 'audio' || format === 'best_audio' || format === 'audio_m4a_128' || format === 'audio_m4a_48';
-  const ext = isAudio ? 'm4a' : 'mp4';
   const tempOutputTemplate = path.join(TEMP_DIR, `${jobId}.%(ext)s`);
 
-  let formatSelector = 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b';
-  if (format === 'audio_m4a_128') {
-    formatSelector = 'ba[format_id=140]/ba[ext=m4a]/ba';
-  } else if (format === 'audio_m4a_48') {
-    formatSelector = 'ba[format_id=249]/ba[abr<=64]/ba';
-  } else if (isAudio) {
-    formatSelector = 'ba[ext=m4a]/ba/b';
-  } else if (format && format.startsWith('height_')) {
-    const h = parseInt(format.replace('height_', ''), 10);
-    formatSelector = `bv*[height<=${h}][ext=mp4]+ba[ext=m4a]/bv*[height<=${h}]+ba/b[height<=${h}]/bv*+ba/b`;
-  } else if (format && format !== 'best_mp4') {
-    formatSelector = `${format}+ba[ext=m4a]/${format}+ba/${format}/bv*+ba/b`;
-  }
-
-  const args = [
-    '--js-runtimes', 'node',
-    '--newline',
-    '--progress',
-    '-f', formatSelector,
-    '--no-playlist',
-    '--no-warnings',
-    '--no-check-certificates',
-    '--geo-bypass',
-    '-o', tempOutputTemplate
-  ];
-
-  if (ffmpegPath && fs.existsSync(ffmpegPath)) {
-    args.push('--ffmpeg-location', ffmpegPath);
-    if (!isAudio) {
-      args.push('--merge-output-format', 'mp4');
-    }
-  }
-
-  args.push(url);
+  const { args, isAudio, expectedExt } = buildYtDlpDownloadArgs({
+    url: normalizedUrl,
+    format,
+    type,
+    tempOutputTemplate
+  });
 
   const job = {
     id: jobId,
     status: 'downloading',
     percent: 0,
+    streamCount: 0,
     totalSize: '',
     speed: '',
     eta: '',
-    stageText: 'Starting download...',
+    stageText: 'Initializing stream...',
     cleanTitle,
-    ext,
+    ext: expectedExt,
     filePath: null,
     fileName: null,
     error: null,
@@ -640,29 +712,50 @@ app.post('/api/start-download', async (req, res) => {
     const trimmed = line.trim();
     if (!trimmed) return;
 
-    if (trimmed.includes('[Merger]') || trimmed.includes('Merging formats')) {
+    if (trimmed.includes('[download] Destination:')) {
+      job.streamCount += 1;
+      return;
+    }
+
+    if (trimmed.includes('[Merger]') || trimmed.includes('Merging formats') || trimmed.includes('[ExtractAudio]')) {
       job.status = 'merging';
       job.percent = 99;
-      job.stageText = 'Merging HD Video & Audio into MP4...';
+      job.stageText = isAudio
+        ? 'Finalizing high-quality audio...'
+        : 'Merging HD Video & Audio into MP4...';
       return;
     }
 
     const match = trimmed.match(/\[download\]\s+(\d+(?:\.\d+)?)%\s+of\s+~?\s*([^\s]+)(?:\s+at\s+([^\s]+))?(?:\s+ETA\s+([^\s]+))?/i);
     if (match) {
-      const pct = parseFloat(match[1]);
-      if (!isNaN(pct)) {
-        job.percent = Math.min(99, pct);
+      const rawPct = parseFloat(match[1]);
+      if (!isNaN(rawPct)) {
+        let weightedPct = rawPct;
+        if (!isAudio) {
+          // Video stream (stream 1) = 0%..85%, Audio stream (stream 2) = 85%..98%
+          if (job.streamCount <= 1) {
+            weightedPct = rawPct * 0.85;
+          } else {
+            weightedPct = 85 + (rawPct * 0.13);
+          }
+        } else {
+          weightedPct = rawPct * 0.98;
+        }
+        job.percent = Math.min(99, Math.max(job.percent, weightedPct));
       }
       if (match[2] && match[2] !== 'N/A') job.totalSize = match[2];
       if (match[3] && match[3] !== 'N/A' && match[3] !== 'Unknown') job.speed = match[3];
       if (match[4] && match[4] !== 'N/A' && match[4] !== 'Unknown') job.eta = match[4];
-      job.stageText = `Downloading... ${job.percent.toFixed(1)}%`;
+
+      const stagePrefix = (!isAudio && job.streamCount > 1)
+        ? 'Downloading Audio Track'
+        : (isAudio ? 'Downloading Audio' : 'Downloading HD Video');
+      job.stageText = `${stagePrefix}... ${job.percent.toFixed(1)}%`;
     }
   };
 
   proc.stdout.on('data', (data) => {
-    const lines = data.toString().split(/\r?\n/);
-    lines.forEach(parseProgressLine);
+    data.toString().split(/\r?\n/).forEach(parseProgressLine);
   });
 
   proc.stderr.on('data', (data) => {
@@ -678,23 +771,23 @@ app.post('/api/start-download', async (req, res) => {
 
     if (code !== 0 || files.length === 0) {
       job.status = 'error';
-      job.error = stderr.trim() || 'Failed to download YouTube video. Please try another quality option.';
+      job.error = stderr.trim() || 'Failed to download YouTube media. Please try another quality option.';
       return;
     }
 
     const finalFile = files[0];
-    const actualExt = path.extname(finalFile).replace('.', '') || ext;
+    const actualExt = path.extname(finalFile).replace('.', '') || expectedExt;
     job.filePath = path.join(TEMP_DIR, finalFile);
     job.fileName = `${cleanTitle}.${actualExt}`;
     job.percent = 100;
     job.status = 'completed';
-    job.stageText = '100% Complete! Saving file to your browser...';
+    job.stageText = '100% Complete! Saving file to your device...';
   });
 
   res.json({ jobId });
 });
 
-// Live progress polling
+// Live progress polling endpoint
 app.get('/api/progress/:jobId', (req, res) => {
   const job = downloadJobs.get(req.params.jobId);
   if (!job) {
@@ -712,7 +805,7 @@ app.get('/api/progress/:jobId', (req, res) => {
   });
 });
 
-// Serve completed file to browser
+// Serve completed file to user's browser
 app.get('/api/file/:jobId', (req, res) => {
   const job = downloadJobs.get(req.params.jobId);
   if (!job || job.status !== 'completed' || !job.filePath || !fs.existsSync(job.filePath)) {
@@ -725,10 +818,11 @@ app.get('/api/file/:jobId', (req, res) => {
   });
 });
 
-// Direct single-request download endpoint
+// Direct single-request download endpoint (used when job polling isn't available)
 app.get('/api/download', async (req, res) => {
   const { url, format, title, type } = req.query;
-  if (!url || !isYouTubeUrl(url)) return res.status(400).send('Valid YouTube URL is required');
+  const normalizedUrl = normalizeYouTubeUrl(url);
+  if (!normalizedUrl) return res.status(400).send('Valid YouTube URL is required');
 
   try {
     await ensureYtDlp();
@@ -737,40 +831,15 @@ app.get('/api/download', async (req, res) => {
   }
 
   const cleanTitle = sanitizeFilename(title || 'youtube_video');
-  const isAudio = type === 'audio' || format === 'best_audio';
-  const ext = isAudio ? 'm4a' : 'mp4';
   const tempId = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const tempOutputTemplate = path.join(TEMP_DIR, `${tempId}.%(ext)s`);
 
-  let formatSelector = 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b';
-  if (isAudio) {
-    formatSelector = 'ba[ext=m4a]/ba/b';
-  } else if (format && format !== 'best_mp4') {
-    if (format.startsWith('height_')) {
-      const h = parseInt(format.replace('height_', ''), 10);
-      formatSelector = `bv*[height<=${h}][ext=mp4]+ba[ext=m4a]/b[height<=${h}][ext=mp4]/bv*[height<=${h}]+ba/b[height<=${h}]/bv*+ba/b`;
-    } else {
-      formatSelector = `${format}+ba[ext=m4a]/${format}+ba/${format}/bv*+ba/b`;
-    }
-  }
-
-  const args = [
-    '--js-runtimes', 'node',
-    '--extractor-args', 'youtube:player_client=ios,android_vr,tv,web',
-    '-f', formatSelector,
-    '--no-playlist',
-    '--no-warnings',
-    '--no-check-certificates',
-    '--geo-bypass',
-    '-o', tempOutputTemplate
-  ];
-
-  if (ffmpegPath && fs.existsSync(ffmpegPath)) {
-    args.push('--ffmpeg-location', ffmpegPath);
-    if (!isAudio) args.push('--merge-output-format', 'mp4');
-  }
-
-  args.push(url);
+  const { args, expectedExt } = buildYtDlpDownloadArgs({
+    url: normalizedUrl,
+    format,
+    type,
+    tempOutputTemplate
+  });
 
   const proc = spawn(YT_DLP_PATH, args);
   let stderr = '';
@@ -790,7 +859,7 @@ app.get('/api/download', async (req, res) => {
     }
 
     const downloadedFile = path.join(TEMP_DIR, files[0]);
-    const actualExt = path.extname(files[0]).replace('.', '') || ext;
+    const actualExt = path.extname(files[0]).replace('.', '') || expectedExt;
     const downloadFileName = `${cleanTitle}.${actualExt}`;
 
     res.download(downloadedFile, downloadFileName, () => {
