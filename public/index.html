@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SnagVids — All-in-One Video Downloader (YouTube, TikTok, Instagram, Facebook)</title>
+  <title>SnapVids — YouTube Video &amp; Shorts Downloader (HD &amp; MP3)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -22,21 +22,19 @@
     <div class="container nav-container">
       <a href="#" class="brand">
         <div class="brand-logo">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="7 10 12 15 17 10"/>
-            <line x1="12" y1="15" x2="12" y2="3"/>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
           </svg>
         </div>
         <div class="brand-text">
-          <span class="brand-name">SnagVids</span>
-          <span class="brand-tag">PRO</span>
+          <span class="brand-name">SnapVids</span>
+          <span class="brand-tag">YouTube Pro</span>
         </div>
       </a>
 
       <nav class="nav-links">
         <a href="#downloader" class="nav-link active">Downloader</a>
-        <a href="#platforms" class="nav-link">Platforms</a>
+        <a href="#features" class="nav-link">Features</a>
         <a href="#how-it-works" class="nav-link">How It Works</a>
         <a href="#history-section" class="nav-link">Recent</a>
       </nav>
@@ -70,53 +68,28 @@
   <main class="container" id="downloader">
     <section class="hero">
       <div class="hero-pill">
-        <span class="sparkle">✦</span> Fast, Clean &amp; Watermark-Free Media Downloader
+        <span class="sparkle">✦</span> Fast, Clean &amp; Free YouTube Video &amp; Shorts Downloader
       </div>
       <h1 class="hero-title">
-        Download Videos from <span class="gradient-text">Any Platform</span> in Seconds
+        Download <span class="gradient-text">YouTube Videos &amp; Shorts</span> in HD
       </h1>
       <p class="hero-subtitle">
-        Paste any link from <strong>YouTube</strong>, <strong>TikTok</strong>, <strong>Instagram</strong>, or <strong>Facebook</strong> below to fetch HD video or audio files directly to your device.
+        Paste any link from <strong>YouTube</strong> or <strong>Shorts</strong> below to download Full HD video (1080p, 720p) or high-bitrate MP3 audio directly to your device.
       </p>
-
-      <!-- Platform Selector Pills -->
-      <div class="platform-tabs" role="tablist">
-        <button class="platform-tab active" data-platform="all" type="button">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-          All Links
-        </button>
-        <button class="platform-tab" data-platform="youtube" type="button">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" class="yt-color"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
-          YouTube
-        </button>
-        <button class="platform-tab" data-platform="tiktok" type="button">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" class="tt-color"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z"/></svg>
-          TikTok
-        </button>
-        <button class="platform-tab" data-platform="instagram" type="button">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ig-color"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>
-          Instagram
-        </button>
-        <button class="platform-tab" data-platform="facebook" type="button">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" class="fb-color"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
-          Facebook
-        </button>
-      </div>
 
       <!-- Search / Link Input Box -->
       <div class="search-card">
         <form id="download-form" class="search-form" autocomplete="off">
           <div class="input-wrapper">
             <span class="link-icon" id="detected-platform-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" class="yt-color">
+                <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
               </svg>
             </span>
             <input
               type="url"
               id="video-url"
-              placeholder="Paste YouTube, TikTok, Instagram, or Facebook video link here..."
+              placeholder="Paste YouTube link here (e.g. https://youtu.be/... or https://youtube.com/watch?v=...)"
               required
             />
             <button type="button" id="clear-btn" class="action-chip hidden" title="Clear link">
@@ -141,7 +114,7 @@
 
         <!-- Helper hint -->
         <div class="supported-hint">
-          <span>Supports Reels, Shorts, Stories, Public Videos &amp; MP3/M4A Audio</span>
+          <span>Supports YouTube Videos, YouTube Shorts, 1080p/720p HD &amp; MP3/M4A Audio</span>
         </div>
       </div>
 
@@ -158,8 +131,8 @@
       <!-- Loading Skeleton -->
       <div id="loading-card" class="result-card loading-state hidden">
         <div class="spinner-ring"></div>
-        <h3>Analyzing Link &amp; Extracting Streams...</h3>
-        <p>Please wait a few seconds while we fetch the highest quality video &amp; audio options.</p>
+        <h3>Analyzing YouTube Link &amp; Extracting Streams...</h3>
+        <p>Please wait a few moments while we fetch available HD video &amp; audio formats.</p>
       </div>
 
       <!-- Video Result Card -->
@@ -184,7 +157,7 @@
           <div class="download-options-panel">
             <div class="panel-header">
               <h3>Select Quality to Download</h3>
-              <span class="panel-sub">Click any format below to start downloading immediately</span>
+              <span class="panel-sub">Choose your desired resolution or audio file below</span>
             </div>
             <div id="options-list" class="options-list">
               <!-- Populated dynamically -->
@@ -210,12 +183,12 @@
       </div>
     </section>
 
-    <!-- Supported Platforms Showcase -->
-    <section id="platforms" class="section">
+    <!-- Features Showcase -->
+    <section id="features" class="section">
       <div class="section-header">
-        <span class="section-tag">SUPPORTED NETWORKS</span>
-        <h2>One Downloader for All Major Platforms</h2>
-        <p>No extra software or extensions needed. Just copy the link and download in original quality.</p>
+        <span class="section-tag">CORE FEATURES</span>
+        <h2>High-Quality YouTube Media Downloads</h2>
+        <p>No browser extensions or third-party software needed. Fast, simple, and clean.</p>
       </div>
 
       <div class="platforms-grid">
@@ -223,36 +196,44 @@
           <div class="p-icon yt-bg">
             <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
           </div>
-          <h3>YouTube Downloader</h3>
-          <p>Download full HD videos, YouTube Shorts, and high-bitrate audio tracks effortlessly.</p>
-          <span class="p-formats">MP4 • Shorts • 1080p/720p • Audio</span>
+          <h3>Full HD 1080p &amp; 720p</h3>
+          <p>Download full-length YouTube videos in crystal-clear high definition with merged audio.</p>
+          <span class="p-formats">1080p • 720p • 480p • 360p</span>
         </div>
 
         <div class="platform-card">
-          <div class="p-icon tt-bg">
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z"/></svg>
+          <div class="p-icon yt-bg">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M17.77 10.32l-1.2-.5-1.1-.47.66-1.07A5.02 5.02 0 0 0 14.88 4a5.08 5.08 0 0 0-5.11 5.06c0 .4.06.8.18 1.18l.33 1.05-1.04-.37A5.06 5.06 0 0 0 3.75 14a5.07 5.07 0 0 0 5.08 5.06c1.17 0 2.27-.4 3.16-1.11l1.15-.93-.52 1.41a5.08 5.08 0 0 0 4.77 3.32c2.8 0 5.08-2.27 5.08-5.06a5.04 5.04 0 0 0-4.7-5.37zM10 14.5v-5l4.5 2.5-4.5 2.5z"/>
+            </svg>
           </div>
-          <h3>TikTok Downloader</h3>
-          <p>Save TikTok videos in crisp HD quality without watermarks or overlays.</p>
-          <span class="p-formats">No Watermark • HD MP4 • Sound</span>
+          <h3>YouTube Shorts Support</h3>
+          <p>Directly download portrait YouTube Shorts in original MP4 format without quality loss.</p>
+          <span class="p-formats">Shorts • Vertical MP4 • Original Audio</span>
         </div>
 
         <div class="platform-card">
-          <div class="p-icon ig-bg">
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>
+          <div class="p-icon yt-bg">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M9 18V5l12-2v13"></path>
+              <circle cx="6" cy="18" r="3"></circle>
+              <circle cx="18" cy="16" r="3"></circle>
+            </svg>
           </div>
-          <h3>Instagram Downloader</h3>
-          <p>Download Instagram Reels, IGTV videos, and public video posts in original resolution.</p>
-          <span class="p-formats">Reels • Posts • Original MP4</span>
+          <h3>MP3 &amp; M4A Audio Extraction</h3>
+          <p>Extract high-bitrate audio from YouTube songs, podcasts, and speeches with one click.</p>
+          <span class="p-formats">High Bitrate • MP3 / M4A</span>
         </div>
 
         <div class="platform-card">
-          <div class="p-icon fb-bg">
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+          <div class="p-icon yt-bg">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
           </div>
-          <h3>Facebook Downloader</h3>
-          <p>Grab Facebook Watch videos, Reels, and shared public clips in SD or HD quality.</p>
-          <span class="p-formats">FB Watch • Reels • HD / SD</span>
+          <h3>Fast &amp; Direct Downloads</h3>
+          <p>Real-time percentage progress bar with direct download delivery straight to your device.</p>
+          <span class="p-formats">Fast • Ad-Free • Clean</span>
         </div>
       </div>
     </section>
@@ -261,23 +242,23 @@
     <section id="how-it-works" class="section">
       <div class="section-header">
         <span class="section-tag">EASY 3-STEP PROCESS</span>
-        <h2>How to Download Any Video</h2>
+        <h2>How to Download Any YouTube Video</h2>
       </div>
       <div class="steps-grid">
         <div class="step-card">
           <div class="step-num">01</div>
-          <h3>Copy Video Link</h3>
-          <p>Open YouTube, TikTok, Instagram, or Facebook and copy the link of the video or reel you want to save.</p>
+          <h3>Copy YouTube Link</h3>
+          <p>Open YouTube on your browser or app and copy the link of any video or Short you want to download.</p>
         </div>
         <div class="step-card">
           <div class="step-num">02</div>
           <h3>Paste &amp; Fetch</h3>
-          <p>Click the <strong>Paste</strong> button in the input box above and press <strong>Fetch Video</strong> to load available formats.</p>
+          <p>Click the <strong>Paste</strong> button in the box above and click <strong>Fetch Video</strong> to inspect available formats.</p>
         </div>
         <div class="step-card">
           <div class="step-num">03</div>
           <h3>Download Instantly</h3>
-          <p>Choose your preferred resolution (HD MP4 or Audio) and the file will download directly to your device.</p>
+          <p>Select your preferred quality (1080p, 720p, or Audio) and your browser will save the file directly.</p>
         </div>
       </div>
     </section>
@@ -298,11 +279,11 @@
   <footer class="footer">
     <div class="container footer-content">
       <div class="footer-brand">
-        <span class="brand-name">StreamSave</span>
-        <p>Universal Social Media Video Downloader — Built for speed, simplicity &amp; quality.</p>
+        <span class="brand-name">SnapVids</span>
+        <p>Fast, Clean &amp; Free YouTube Video &amp; Shorts Downloader.</p>
       </div>
       <div class="footer-note">
-        <span>Supports YouTube • TikTok • Instagram • Facebook</span>
+        <span>Supports YouTube Videos • YouTube Shorts • High-Bitrate Audio</span>
       </div>
     </div>
   </footer>

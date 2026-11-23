@@ -1,7 +1,7 @@
 {
   "name": "snagvids",
   "version": "1.0.0",
-  "description": "SnagVids — All-in-One Video Downloader for YouTube, TikTok, Instagram, and Facebook",
+  "description": "SnapVids — YouTube Video, Shorts and Audio Downloader (HD & MP3)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

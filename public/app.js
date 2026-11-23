@@ -8,7 +8,6 @@ const alertMessage = document.getElementById('alert-message');
 const loadingCard = document.getElementById('loading-card');
 const resultCard = document.getElementById('result-card');
 const themeToggle = document.getElementById('theme-toggle');
-const platformTabs = document.querySelectorAll('.platform-tab');
 const engineBadge = document.getElementById('engine-badge');
 const engineStatusText = document.getElementById('engine-status-text');
 
@@ -35,14 +34,6 @@ const clearHistoryBtn = document.getElementById('clear-history-btn');
 let activePollTimer = null;
 const defaultPageTitle = document.title;
 
-const placeholders = {
-  all: 'Paste YouTube, TikTok, Instagram, or Facebook video link here...',
-  youtube: 'Paste YouTube video or Shorts link (e.g., https://youtu.be/...)',
-  tiktok: 'Paste TikTok video link (e.g., https://www.tiktok.com/@user/video/...)',
-  instagram: 'Paste Instagram Reel or Post link (e.g., https://www.instagram.com/reel/...)',
-  facebook: 'Paste Facebook Watch or Reel link (e.g., https://www.facebook.com/watch/...)'
-};
-
 // Theme Setup (Default: Light / White)
 const savedTheme = localStorage.getItem('streamsave_theme') || 'light';
 document.documentElement.setAttribute('data-theme', savedTheme);
@@ -67,43 +58,34 @@ async function checkEngineStatus() {
       engineStatusText.textContent = 'Setting up Engine...';
       setTimeout(checkEngineStatus, 2500);
     }
-  } catch (e) {
+  } catch {
     setTimeout(checkEngineStatus, 4000);
   }
 }
 checkEngineStatus();
 
-// Platform Tab Switching
-platformTabs.forEach(tab => {
-  tab.addEventListener('click', () => {
-    platformTabs.forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    const p = tab.dataset.platform;
-    urlInput.placeholder = placeholders[p] || placeholders.all;
-    urlInput.focus();
-  });
-});
-
-function detectPlatformFromUrl(url) {
-  const u = (url || '').toLowerCase();
-  if (u.includes('youtube.com') || u.includes('youtu.be')) return 'youtube';
-  if (u.includes('tiktok.com')) return 'tiktok';
-  if (u.includes('instagram.com')) return 'instagram';
-  if (u.includes('facebook.com') || u.includes('fb.watch') || u.includes('fb.com')) return 'facebook';
-  return 'all';
+// Validate YouTube URL
+function isYouTubeUrl(urlStr) {
+  try {
+    const parsed = new URL(urlStr);
+    const host = parsed.hostname.toLowerCase();
+    return (
+      host === 'www.youtube.com' ||
+      host === 'youtube.com' ||
+      host === 'm.youtube.com' ||
+      host === 'music.youtube.com' ||
+      host === 'youtu.be'
+    );
+  } catch {
+    return false;
+  }
 }
 
+// Input actions
 urlInput.addEventListener('input', () => {
   const val = urlInput.value.trim();
   clearBtn.classList.toggle('hidden', !val);
   hideAlert();
-
-  if (val) {
-    const detected = detectPlatformFromUrl(val);
-    platformTabs.forEach(t => {
-      t.classList.toggle('active', t.dataset.platform === detected);
-    });
-  }
 });
 
 clearBtn.addEventListener('click', () => {
@@ -120,9 +102,9 @@ pasteBtn.addEventListener('click', async () => {
       urlInput.value = text.trim();
       urlInput.dispatchEvent(new Event('input'));
     }
-  } catch (err) {
+  } catch {
     urlInput.focus();
-    showAlert('Please press Ctrl+V to paste the link.');
+    showAlert('Please press Ctrl+V to paste the YouTube link.');
   }
 });
 
@@ -163,11 +145,18 @@ function formatNumber(num) {
   return String(num);
 }
 
+// Handle Form Submission
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const url = urlInput.value.trim();
+
   if (!url) {
-    showAlert('Please paste a valid video URL first.');
+    showAlert('Please paste a YouTube video or Shorts link first.');
+    return;
+  }
+
+  if (!isYouTubeUrl(url)) {
+    showAlert('Please enter a valid YouTube link (e.g. https://youtu.be/... or https://youtube.com/watch?v=...).');
     return;
   }
 
@@ -192,13 +181,13 @@ form.addEventListener('submit', async (e) => {
 
     const data = await response.json();
     if (!response.ok || data.error) {
-      throw new Error(data.error || 'Could not fetch video details.');
+      throw new Error(data.error || 'Could not fetch YouTube video details.');
     }
 
     renderResult(data, url);
     saveToHistory(data, url);
   } catch (err) {
-    showAlert(err.message || 'Failed to fetch video. Please check the link and try again.');
+    showAlert(err.message || 'Failed to fetch YouTube video. Please check the link and try again.');
   } finally {
     loadingCard.classList.add('hidden');
     fetchBtn.disabled = false;
@@ -206,6 +195,7 @@ form.addEventListener('submit', async (e) => {
   }
 });
 
+// Render Video Details & Formats
 function renderResult(data, originalUrl) {
   const thumbUrl = data.thumbnail
     ? `/api/thumbnail?url=${encodeURIComponent(data.thumbnail)}`
@@ -217,19 +207,15 @@ function renderResult(data, originalUrl) {
   };
 
   resDuration.textContent = formatDuration(data.duration, data.duration_string);
-  resPlatformBadge.textContent = (data.platform === 'other' ? data.extractor : data.platform).toUpperCase();
+  resPlatformBadge.textContent = 'YOUTUBE';
   resTitle.textContent = data.title;
   resUploader.textContent = data.uploader;
 
   resStats.innerHTML = '';
   const views = formatNumber(data.view_count);
   const likes = formatNumber(data.like_count);
-  if (views) {
-    resStats.innerHTML += `<span class="stat-pill">👁 ${views} views</span>`;
-  }
-  if (likes) {
-    resStats.innerHTML += `<span class="stat-pill">♥ ${likes} likes</span>`;
-  }
+  if (views) resStats.innerHTML += `<span class="stat-pill">👁 ${views} views</span>`;
+  if (likes) resStats.innerHTML += `<span class="stat-pill">♥ ${likes} likes</span>`;
 
   optionsList.innerHTML = '';
   (data.options || []).forEach(opt => {
@@ -279,6 +265,7 @@ function renderResult(data, originalUrl) {
   resultCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
+// Download Process Handling
 async function startTrackedDownload({ url, format, type, title, label, ext, directUrl, isServerless, clickedBtn }) {
   hideAlert();
   if (activePollTimer) {
@@ -301,11 +288,11 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
   downloadProgressBar.style.width = '2%';
   downloadPercentBadge.textContent = '0%';
   downloadProgressText.textContent = `Initializing ${label}...`;
-  downloadSizeInfo.textContent = 'Connecting to media stream...';
+  downloadSizeInfo.textContent = 'Connecting to YouTube stream...';
   downloadSpeedInfo.textContent = '';
   downloadProgressNote.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
-  // On Vercel serverless (stateless across HTTP requests) or direct CDN stream, download in a single request
+  // Cloud / Direct Stream Download (Single Request)
   if (isServerless || directUrl) {
     try {
       const targetEndpoint = directUrl
@@ -318,16 +305,16 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
           fakePct += Math.max(1, Math.round((95 - fakePct) * 0.12));
           downloadProgressBar.style.width = `${fakePct}%`;
           downloadPercentBadge.textContent = `${fakePct}%`;
-          downloadProgressText.textContent = `Downloading & Processing ${label}... ${fakePct}%`;
+          downloadProgressText.textContent = `Processing YouTube Stream (${label})... ${fakePct}%`;
           if (clickedLabel) clickedLabel.textContent = `${fakePct}%`;
-          document.title = `(${fakePct}%) Downloading — SnagVids`;
+          document.title = `(${fakePct}%) Downloading — SnapVids`;
         }
       }, 450);
 
       const response = await fetch(targetEndpoint);
       if (!response.ok) {
         const errText = await response.text();
-        throw new Error(errText || 'Failed to download media.');
+        throw new Error(errText || 'Failed to download YouTube video.');
       }
 
       const blob = await response.blob();
@@ -338,14 +325,14 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
       downloadProgressBar.style.width = '100%';
       downloadPercentBadge.textContent = '100%';
       progressSpinner.classList.add('hidden');
-      downloadProgressText.textContent = '✅ 100% Complete! File sent to Chrome Downloads.';
+      downloadProgressText.textContent = '✅ 100% Complete! File saved to browser downloads.';
       downloadSizeInfo.textContent = `Size: ${formatBytes(blob.size)}`;
-      downloadSpeedInfo.textContent = 'Saved to your Downloads folder';
+      downloadSpeedInfo.textContent = 'Saved to Downloads folder';
 
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = blobUrl;
-      const safeName = (title || 'video').replace(/[<>:"/\\|?*]/g, '').trim().slice(0, 90) || 'video';
+      const safeName = (title || 'youtube_video').replace(/[<>:"/\\|?*]/g, '').trim().slice(0, 90) || 'youtube_video';
       a.download = `${safeName}.${type === 'audio' ? 'm4a' : (ext || 'mp4')}`;
       document.body.appendChild(a);
       a.click();
@@ -369,6 +356,7 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
     return;
   }
 
+  // Local Tracked Download with real-time FFmpeg & yt-dlp progress
   try {
     const startRes = await fetch('/api/start-download', {
       method: 'POST',
@@ -393,15 +381,13 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
         downloadProgressBar.style.width = `${Math.max(3, pct)}%`;
         downloadPercentBadge.textContent = `${pct}%`;
         downloadProgressText.textContent = prog.stageText || `Downloading... ${pct}%`;
-        document.title = `(${pct}%) Downloading — SnagVids`;
+        document.title = `(${pct}%) Downloading — SnapVids`;
 
         if (clickedLabel) {
           clickedLabel.textContent = prog.status === 'merging' ? 'Merging...' : `${pct}%`;
         }
 
-        if (prog.totalSize) {
-          downloadSizeInfo.textContent = `Total Size: ${prog.totalSize}`;
-        }
+        if (prog.totalSize) downloadSizeInfo.textContent = `Total Size: ${prog.totalSize}`;
         const metaParts = [];
         if (prog.speed) metaParts.push(`Speed: ${prog.speed}`);
         if (prog.eta) metaParts.push(`ETA: ${prog.eta}`);
@@ -415,7 +401,7 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
           downloadProgressBar.style.width = '100%';
           downloadPercentBadge.textContent = '100%';
           progressSpinner.classList.add('hidden');
-          downloadProgressText.textContent = '✅ 100% Complete! File sent to Chrome Downloads.';
+          downloadProgressText.textContent = '✅ 100% Complete! File saved to browser downloads.';
           downloadSpeedInfo.textContent = 'Saved to your Downloads folder';
 
           allBtns.forEach(b => {
@@ -424,7 +410,6 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
             if (lbl) lbl.textContent = 'Download';
           });
 
-          // Trigger immediate Chrome download with full Content-Length
           const a = document.createElement('a');
           a.href = `/api/file/${jobId}`;
           a.style.display = 'none';
@@ -443,8 +428,8 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
             if (lbl) lbl.textContent = 'Download';
           });
         }
-      } catch (e) {
-        // Ignore transient polling hiccup
+      } catch {
+        // Ignore transient poll hiccup
       }
     }, 350);
   } catch (err) {
@@ -459,7 +444,7 @@ async function startTrackedDownload({ url, format, type, title, label, ext, dire
   }
 }
 
-// LocalStorage Recent History
+// Recent Downloads History (LocalStorage)
 function getHistory() {
   try {
     return JSON.parse(localStorage.getItem('streamsave_history') || '[]');
@@ -472,7 +457,7 @@ function saveToHistory(data, url) {
   const list = getHistory().filter(item => item.url !== url);
   list.unshift({
     title: data.title,
-    platform: data.platform || 'video',
+    platform: 'YouTube',
     thumbnail: data.thumbnail ? `/api/thumbnail?url=${encodeURIComponent(data.thumbnail)}` : '',
     url,
     time: Date.now()
@@ -499,7 +484,7 @@ function renderHistory() {
       <img class="history-thumb" src="${item.thumbnail || fallbackImg}" alt="thumb" onerror="this.src='${fallbackImg}'" />
       <div class="history-info">
         <div class="history-title" title="${item.title}">${item.title}</div>
-        <div class="history-meta">${item.platform}</div>
+        <div class="history-meta">YouTube</div>
       </div>
       <button class="history-refetch" type="button">Fetch Again</button>
     `;
