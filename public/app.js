@@ -399,13 +399,12 @@ function updateSelectedDisplay() {
   };
 }
 
-// Render dynamic format options list grouped by Video, Audio, and Subtitles (matching ytdown.to)
+// Render dynamic format options list grouped by Video and Audio (matching ytdown.to)
 function renderOptionsList() {
   if (!currentVideoData || !currentVideoData.options) return;
 
   groupVideoList.innerHTML = '';
   groupAudioList.innerHTML = '';
-  groupSubtitlesList.innerHTML = '';
 
   // 1. Video Options
   const videoOpts = currentVideoData.options.filter(o => o.type === 'video');

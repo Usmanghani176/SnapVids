@@ -245,8 +245,7 @@ async function fetchCloudYouTubeInfo(url) {
     like_count: null,
     comment_count: null,
     isServerless: true,
-    options,
-    subtitles: []
+    options
   };
 }
 
