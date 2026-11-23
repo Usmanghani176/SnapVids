@@ -531,33 +531,6 @@ app.post('/api/info', async (req, res) => {
       directUrl: null
     });
 
-    // Subtitles
-    const subtitles = [];
-    const rawSubs = info.subtitles || {};
-    const autoSubs = info.automatic_captions || {};
-    const subLangMap = {
-      'en': 'English', 'en-US': 'English (United States)', 'fi': 'Finnish', 'fr': 'French',
-      'fr-FR': 'French (France)', 'de': 'German', 'de-DE': 'German (Germany)', 'it': 'Italian',
-      'pt': 'Portuguese', 'pt-BR': 'Portuguese (Brazil)', 'ro': 'Romanian', 'es': 'Spanish',
-      'es-US': 'Spanish (United States)', 'es-ES': 'Spanish (Spain)', 'hi': 'Hindi', 'ur': 'Urdu',
-      'ar': 'Arabic', 'ru': 'Russian', 'ja': 'Japanese', 'ko': 'Korean', 'zh': 'Chinese'
-    };
-
-    const allSubKeys = Object.keys(rawSubs).length ? Object.keys(rawSubs) : Object.keys(autoSubs).slice(0, 10);
-    for (const code of allSubKeys) {
-      const list = rawSubs[code] || autoSubs[code] || [];
-      const vttOrSrt = list.find(s => s.ext === 'vtt' || s.ext === 'srt') || list[0];
-      const langName = subLangMap[code] || list[0]?.name || code;
-      if (vttOrSrt && subtitles.length < 12) {
-        subtitles.push({
-          id: `sub_${code}`,
-          code,
-          label: langName,
-          url: vttOrSrt.url
-        });
-      }
-    }
-
     res.json({
       title: info.title || info.fulltitle || 'YouTube Video',
       uploader: info.uploader || info.channel || info.creator || 'YouTube Creator',
@@ -573,8 +546,7 @@ app.post('/api/info', async (req, res) => {
       like_count: info.like_count || null,
       comment_count: info.comment_count || null,
       isServerless: IS_VERCEL,
-      options,
-      subtitles
+      options
     });
   } catch (err) {
     console.error('Info error, falling back to cloud extractor:', err.message);

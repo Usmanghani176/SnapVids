@@ -43,8 +43,6 @@ const groupVideoContainer = document.getElementById('group-video-container');
 const groupVideoList = document.getElementById('group-video-list');
 const groupAudioContainer = document.getElementById('group-audio-container');
 const groupAudioList = document.getElementById('group-audio-list');
-const groupSubtitlesContainer = document.getElementById('group-subtitles-container');
-const groupSubtitlesList = document.getElementById('group-subtitles-list');
 
 // Progress Card Elements
 const downloadProgressNote = document.getElementById('download-progress-note');
@@ -458,32 +456,6 @@ function renderOptionsList() {
 
     groupAudioList.appendChild(item);
   });
-
-  // 3. Subtitles
-  const subs = currentVideoData.subtitles || [];
-  if (subs.length > 0) {
-    groupSubtitlesContainer.classList.remove('hidden');
-    subs.forEach(sub => {
-      const item = document.createElement('div');
-      item.className = 'dropdown-item';
-      item.innerHTML = `
-        <span>${sub.label}</span>
-        <span class="item-sub-tag">VTT</span>
-      `;
-
-      item.addEventListener('click', () => {
-        const title = currentVideoData.title || 'subtitles';
-        window.location.href = `/api/subtitle?url=${encodeURIComponent(sub.url)}&lang=${encodeURIComponent(sub.code)}&title=${encodeURIComponent(title)}`;
-        formatDropdownMenu.classList.add('hidden');
-        formatSelectTrigger.classList.remove('active');
-        if (formatControlsGroup) formatControlsGroup.classList.remove('open');
-      });
-
-      groupSubtitlesList.appendChild(item);
-    });
-  } else {
-    groupSubtitlesContainer.classList.add('hidden');
-  }
 }
 
 // Trigger Download for a specific option
