@@ -12,6 +12,14 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const IS_VERCEL = !!process.env.VERCEL;
 
+// Global crash shields so an unexpected stream reset never brings down the Node server
+process.on('uncaughtException', (err) => {
+  console.error('[CrashShield] Uncaught Exception:', err.message);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[CrashShield] Unhandled Rejection:', reason);
+});
+
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -28,17 +36,21 @@ if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 let isBinaryReady = IS_VERCEL;
 let binaryDownloadPromise = null;
 
-// Active download jobs & metadata cache
+// Active download jobs, concurrency counter & metadata cache
 const downloadJobs = new Map();
 const infoCache = new Map();
 const INFO_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const MAX_CONCURRENT_DOWNLOADS = 3;
+const HTTPS_SAFE_BYTE_LIMIT = 22 * 1024 * 1024; // 22 MB threshold (streams > 22MB use HLS m3u8 to avoid YouTube https range drops)
+
+// YouTube extractor args that avoid tv_samsung ad-stitching cutoffs & solve JS n-challenges cleanly
+const YT_EXTRACTOR_ARGS = 'youtube:player_client=web_safari,visionos;player_js_variant=main';
 
 // Helper: Extract and normalize YouTube URL from raw input or share text
 function normalizeYouTubeUrl(rawInput) {
   if (!rawInput || typeof rawInput !== 'string') return null;
   let str = rawInput.trim();
 
-  // Extract URL if embedded in share text (e.g. "Watch this: https://youtu.be/...")
   const urlMatch = str.match(/https?:\/\/[^\s"'<>]+/i);
   if (urlMatch) {
     str = urlMatch[0];
@@ -72,6 +84,17 @@ function sanitizeFilename(name) {
     .slice(0, 100) || 'youtube_video';
 }
 
+// Helper: Count active running download jobs
+function getActiveDownloadCount() {
+  let count = 0;
+  for (const job of downloadJobs.values()) {
+    if (job.status === 'downloading' || job.status === 'merging') {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 // Periodic cleanup of old temp files and finished jobs (every 10 minutes)
 function cleanupTempFiles() {
   const now = Date.now();
@@ -79,6 +102,9 @@ function cleanupTempFiles() {
 
   for (const [jobId, job] of downloadJobs.entries()) {
     if (now - job.createdAt > maxAgeMs) {
+      if (job.proc && !job.proc.killed) {
+        try { job.proc.kill('SIGKILL'); } catch {}
+      }
       if (job.filePath && fs.existsSync(job.filePath)) {
         try { fs.unlinkSync(job.filePath); } catch {}
       }
@@ -165,7 +191,7 @@ async function ensureYtDlp() {
     ? 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe'
     : 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux';
 
-  console.log('Downloading yt-dlp engine for YouTube downloads...');
+  console.log('Downloading latest yt-dlp engine for YouTube downloads...');
   binaryDownloadPromise = downloadFileAtomic(downloadUrl, YT_DLP_PATH)
     .then(() => {
       console.log('yt-dlp engine downloaded successfully!');
@@ -295,7 +321,7 @@ async function fetchCloudYouTubeInfo(url) {
   };
 }
 
-// Run yt-dlp to inspect all available video and audio streams
+// Run yt-dlp to inspect all available video and audio streams (with 35s process timeout guard)
 function runYtDlpJson(url) {
   return new Promise(async (resolve, reject) => {
     try {
@@ -306,6 +332,7 @@ function runYtDlpJson(url) {
 
     const args = [
       '--js-runtimes', 'node',
+      '--extractor-args', YT_EXTRACTOR_ARGS,
       '--dump-single-json',
       '--no-warnings',
       '--no-playlist',
@@ -321,11 +348,21 @@ function runYtDlpJson(url) {
     const proc = spawn(YT_DLP_PATH, args);
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+
+    const killTimer = setTimeout(() => {
+      timedOut = true;
+      try { proc.kill('SIGKILL'); } catch {}
+    }, 35000);
 
     proc.stdout.on('data', (d) => { stdout += d.toString(); });
     proc.stderr.on('data', (d) => { stderr += d.toString(); });
 
     proc.on('close', (code) => {
+      clearTimeout(killTimer);
+      if (timedOut) {
+        return reject(new Error('YouTube metadata request timed out. Please try again.'));
+      }
       if (code !== 0 && !stdout.trim()) {
         return reject(new Error(stderr.trim() || 'Could not fetch YouTube video details. Make sure the video is public and valid.'));
       }
@@ -340,33 +377,63 @@ function runYtDlpJson(url) {
       }
     });
 
-    proc.on('error', (err) => reject(err));
+    proc.on('error', (err) => {
+      clearTimeout(killTimer);
+      reject(err);
+    });
   });
 }
 
 // Build yt-dlp format selector and CLI arguments for a given format ID
+// Uses fast https stream when video is <= 44MB, and switches to HLS m3u8 for larger videos (>44MB)
+// to completely avoid YouTube's ~50MB https chunk cutoff ("Got error: X bytes read, Y more expected").
 function buildYtDlpDownloadArgs({ url, format, type, tempOutputTemplate }) {
   const isMp3Conversion = format === 'best_audio';
   const isAudio = type === 'audio' || isMp3Conversion || format === 'audio_m4a_128' || format === 'audio_m4a_48';
 
-  let formatSelector = 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b';
+  let formatSelector = 'bv*[height<=1080][protocol*=m3u8]+ba[ext=m4a]/bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080]';
+
   if (format === 'audio_m4a_128') {
     formatSelector = 'ba[format_id=140]/ba[ext=m4a]/ba/b';
   } else if (format === 'audio_m4a_48') {
-    formatSelector = 'ba[format_id=249]/ba[format_id=599]/ba[abr<=64]/ba/b';
+    formatSelector = 'ba[format_id=139]/ba[format_id=249]/ba[abr<=64]/ba/b';
   } else if (isAudio) {
-    formatSelector = 'ba[ext=m4a]/ba/b';
+    formatSelector = 'ba[format_id=140]/ba[ext=m4a]/ba/b';
+  } else if (format && format.startsWith('hls_')) {
+    // Explicit HLS video format for large streams (>44MB) + fast m4a audio
+    const parts = format.replace('hls_', '').split('_');
+    const h = parseInt(parts[0], 10) || 1080;
+    const hlsId = parts[1];
+    if (hlsId && hlsId !== 'auto') {
+      formatSelector = `${hlsId}+140/${hlsId}+ba[ext=m4a]/bv*[height<=${h}][protocol*=m3u8]+ba[ext=m4a]/bv*[height<=${h}]+ba`;
+    } else {
+      formatSelector = `bv*[height<=${h}][protocol*=m3u8]+ba[ext=m4a]/bv*[height<=${h}]+ba/b[height<=${h}]`;
+    }
+  } else if (format && format.startsWith('https_')) {
+    // Explicit fast HTTPS video format for smaller streams (<=44MB)
+    const parts = format.replace('https_', '').split('_');
+    const h = parseInt(parts[0], 10) || 720;
+    const httpsId = parts[1];
+    if (httpsId && httpsId !== 'auto') {
+      formatSelector = `${httpsId}+140/${httpsId}+ba[ext=m4a]/bv*[height<=${h}][ext=mp4]+ba[ext=m4a]/bv*[height<=${h}]+ba`;
+    } else {
+      formatSelector = `bv*[height<=${h}][ext=mp4]+ba[ext=m4a]/bv*[height<=${h}]+ba/b[height<=${h}]`;
+    }
   } else if (format && format.startsWith('height_')) {
-    const h = parseInt(format.replace('height_', ''), 10);
-    formatSelector = `bv*[height<=${h}][ext=mp4]+ba[ext=m4a]/bv*[height<=${h}]+ba/b[height<=${h}]/bv*+ba/b`;
+    const h = parseInt(format.replace('height_', ''), 10) || 1080;
+    formatSelector = `bv*[height<=${h}][protocol*=m3u8]+ba[ext=m4a]/bv*[height<=${h}][ext=mp4]+ba[ext=m4a]/bv*[height<=${h}]+ba/b[height<=${h}]`;
   } else if (format && format !== 'best_mp4') {
     formatSelector = `${format}+ba[ext=m4a]/${format}+ba/${format}/bv*+ba/b`;
   }
 
   const args = [
     '--js-runtimes', 'node',
+    '--extractor-args', YT_EXTRACTOR_ARGS,
     '--newline',
     '--progress',
+    '--retries', '15',
+    '--fragment-retries', '15',
+    '--retry-sleep', '1',
     '-f', formatSelector,
     '--no-playlist',
     '--no-warnings',
@@ -407,20 +474,27 @@ app.get('/api/thumbnail', (req, res) => {
   try {
     const parsed = new URL(imageUrl);
     const client = parsed.protocol === 'https:' ? https : http;
-    client.get(imageUrl, {
+    const upReq = client.get(imageUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Referer': parsed.origin
       }
     }, (proxyRes) => {
       if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
+        proxyRes.resume();
         return res.redirect(`/api/thumbnail?url=${encodeURIComponent(proxyRes.headers.location)}`);
       }
       res.setHeader('Content-Type', proxyRes.headers['content-type'] || 'image/jpeg');
       res.setHeader('Cache-Control', 'public, max-age=86400');
       proxyRes.pipe(res);
-    }).on('error', () => {
-      res.status(500).send('Failed to load thumbnail');
+    });
+
+    upReq.on('error', () => {
+      if (!res.headersSent) res.status(500).send('Failed to load thumbnail');
+    });
+
+    res.on('close', () => {
+      if (!res.writableEnded) upReq.destroy();
     });
   } catch {
     res.status(400).send('Invalid URL');
@@ -461,7 +535,7 @@ app.get('/api/proxy-download', (req, res) => {
       rejectUnauthorized: false
     };
 
-    client.get(targetUrl, reqOpts, (upRes) => {
+    const upReq = client.get(targetUrl, reqOpts, (upRes) => {
       if (upRes.statusCode >= 300 && upRes.statusCode < 400 && upRes.headers.location) {
         upRes.resume();
         const nextUrl = new URL(upRes.headers.location, targetUrl).href;
@@ -485,9 +559,15 @@ app.get('/api/proxy-download', (req, res) => {
         res.setHeader('Content-Length', upRes.headers['content-length']);
       }
       upRes.pipe(res);
-    }).on('error', (err) => {
+    });
+
+    upReq.on('error', (err) => {
       console.error('Proxy stream error:', err.message);
       if (!res.headersSent) res.status(500).send('Failed to proxy media stream.');
+    });
+
+    res.on('close', () => {
+      if (!res.writableEnded) upReq.destroy();
     });
   };
 
@@ -513,6 +593,14 @@ app.post('/api/info', async (req, res) => {
 
   try {
     const info = await runYtDlpJson(normalizedUrl);
+
+    // Guard against active 24/7 live streams that can fill up server disk
+    if (info.is_live) {
+      return res.status(400).json({
+        error: 'Active live streams cannot be downloaded while live. Please try again after the stream finishes.'
+      });
+    }
+
     const rawFormats = Array.isArray(info.formats) ? info.formats : [];
     const duration = info.duration || 0;
 
@@ -526,8 +614,8 @@ app.post('/api/info', async (req, res) => {
       audioBytes140 = Math.round((128 * 1000 / 8) * duration);
     }
 
-    // Low bitrate audio (Format 249 / 48 kbps)
-    const m4a48 = rawFormats.find(f => f.format_id === '249' || f.format_id === '599' || (f.acodec && f.abr && f.abr <= 64));
+    // Low bitrate audio (Format 139 / 249 / 48 kbps)
+    const m4a48 = rawFormats.find(f => f.format_id === '139' || f.format_id === '249' || (f.acodec && f.abr && f.abr <= 64));
     let audioBytes48 = m4a48 ? (m4a48.filesize || m4a48.filesize_approx) : 0;
     if (!audioBytes48 && duration) {
       audioBytes48 = Math.round((48 * 1000 / 8) * duration);
@@ -537,11 +625,10 @@ app.post('/api/info', async (req, res) => {
     const mp3Bytes = Math.round((140 * 1000 / 8) * duration);
 
     const videoFormats = rawFormats.filter(f => f.vcodec && f.vcodec !== 'none' && f.height);
-    const combinedFormats = rawFormats.filter(f => f.vcodec && f.vcodec !== 'none' && f.acodec && f.acodec !== 'none' && f.url);
+    const combinedFormats = rawFormats.filter(f => f.vcodec && f.vcodec !== 'none' && f.acodec && f.acodec !== 'none' && f.url && f.protocol === 'https');
 
+    // Standard YouTube resolutions (1080p Full HD down to 144p, matching ytdown.to)
     const standardHeights = [
-      { h: 2160, tag: '4K',  badge: 'Needs processing', defBitrate: 18000 },
-      { h: 1440, tag: '2K',  badge: 'Needs processing', defBitrate: 8000 },
       { h: 1080, tag: 'FHD', badge: 'Needs processing', defBitrate: 2350 },
       { h: 720,  tag: 'HD',  badge: 'HD',               defBitrate: 850 },
       { h: 480,  tag: 'SD',  badge: 'Needs processing', defBitrate: 450 },
@@ -557,23 +644,39 @@ app.post('/api/info', async (req, res) => {
       const candidates = videoFormats.filter(vf => vf.height === item.h);
       if (!candidates.length) continue;
 
-      // Prefer AVC1/H.264 MP4 stream with exact filesize
-      const f = candidates.find(c => c.ext === 'mp4' && c.vcodec && c.vcodec.startsWith('avc1') && (c.filesize || c.filesize_approx)) ||
-                candidates.find(c => c.ext === 'mp4' && (c.filesize || c.filesize_approx)) ||
-                candidates.find(c => c.filesize || c.filesize_approx) ||
-                candidates[0];
+      // Find exact HTTPS MP4 AVC1 candidate for accurate display size
+      const httpsCandidate =
+        candidates.find(c => c.protocol === 'https' && c.ext === 'mp4' && c.vcodec && c.vcodec.startsWith('avc1') && (c.filesize || c.filesize_approx)) ||
+        candidates.find(c => c.protocol === 'https' && c.ext === 'mp4' && (c.filesize || c.filesize_approx)) ||
+        candidates.find(c => c.filesize || c.filesize_approx) ||
+        candidates[0];
 
-      let vSize = f ? (f.filesize || f.filesize_approx) : 0;
+      // Find HLS (m3u8) candidate for large files (>44MB) that would hit YouTube's https range limit
+      const hlsCandidate =
+        candidates.find(c => c.protocol && c.protocol.includes('m3u8') && c.vcodec && c.vcodec.startsWith('avc1')) ||
+        candidates.find(c => c.protocol && c.protocol.includes('m3u8'));
+
+      let vSize = httpsCandidate ? (httpsCandidate.filesize || httpsCandidate.filesize_approx) : 0;
       if (!vSize && duration) {
         vSize = Math.round((item.defBitrate * 1000 / 8) * duration);
       }
 
-      const hasAudio = f && f.acodec && f.acodec !== 'none';
+      const hasAudio = httpsCandidate && httpsCandidate.acodec && httpsCandidate.acodec !== 'none';
       const totalSize = hasAudio ? vSize : (vSize + audioBytes140);
       const matchingCombined = combinedFormats.find(cf => cf.height === item.h);
 
+      // Select fast HTTPS if stream is <= 44MB; switch to HLS m3u8 if > 44MB so YouTube never drops at 50MB
+      let formatId;
+      if (vSize > HTTPS_SAFE_BYTE_LIMIT && hlsCandidate) {
+        formatId = `hls_${item.h}_${hlsCandidate.format_id}`;
+      } else if (httpsCandidate && httpsCandidate.protocol === 'https') {
+        formatId = `https_${item.h}_${httpsCandidate.format_id}`;
+      } else {
+        formatId = `height_${item.h}`;
+      }
+
       options.push({
-        id: `height_${item.h}`,
+        id: formatId,
         group: 'video',
         label: `${item.h}p · MP4`,
         quality: `${item.h}p`,
@@ -668,6 +771,12 @@ app.post('/api/start-download', async (req, res) => {
     return res.status(400).json({ error: 'Valid YouTube URL is required' });
   }
 
+  if (getActiveDownloadCount() >= MAX_CONCURRENT_DOWNLOADS) {
+    return res.status(429).json({
+      error: 'Server is currently processing maximum concurrent downloads. Please wait a few seconds and try again.'
+    });
+  }
+
   try {
     await ensureYtDlp();
   } catch {
@@ -708,6 +817,15 @@ app.post('/api/start-download', async (req, res) => {
   job.proc = proc;
   let stderr = '';
 
+  // Auto-kill safety timer (15 minutes max per job) so zombie processes can never accumulate
+  const jobKillTimer = setTimeout(() => {
+    if (job.status === 'downloading' || job.status === 'merging') {
+      try { proc.kill('SIGKILL'); } catch {}
+      job.status = 'error';
+      job.error = 'Download timed out after 15 minutes.';
+    }
+  }, 15 * 60 * 1000);
+
   const parseProgressLine = (line) => {
     const trimmed = line.trim();
     if (!trimmed) return;
@@ -728,7 +846,18 @@ app.post('/api/start-download', async (req, res) => {
 
     const match = trimmed.match(/\[download\]\s+(\d+(?:\.\d+)?)%\s+of\s+~?\s*([^\s]+)(?:\s+at\s+([^\s]+))?(?:\s+ETA\s+([^\s]+))?/i);
     if (match) {
-      const rawPct = parseFloat(match[1]);
+      let rawPct = parseFloat(match[1]);
+
+      // If HLS fragment counter (frag X/Y) is present, compute exact fragment ratio so frag 0/Y doesn't spike to 100%
+      const fragMatch = trimmed.match(/\(frag\s+(\d+)\/(\d+)\)/i);
+      if (fragMatch) {
+        const curFrag = parseInt(fragMatch[1], 10);
+        const totalFrags = parseInt(fragMatch[2], 10);
+        if (totalFrags > 0) {
+          rawPct = Math.min(100, (curFrag / totalFrags) * 100);
+        }
+      }
+
       if (!isNaN(rawPct)) {
         let weightedPct = rawPct;
         if (!isAudio) {
@@ -743,7 +872,11 @@ app.post('/api/start-download', async (req, res) => {
         }
         job.percent = Math.min(99, Math.max(job.percent, weightedPct));
       }
-      if (match[2] && match[2] !== 'N/A') job.totalSize = match[2];
+      if (match[2] && match[2] !== 'N/A' && !match[2].endsWith('B')) {
+        job.totalSize = match[2];
+      } else if (match[2] && (match[2].includes('MiB') || match[2].includes('GiB') || match[2].includes('KiB'))) {
+        job.totalSize = match[2];
+      }
       if (match[3] && match[3] !== 'N/A' && match[3] !== 'Unknown') job.speed = match[3];
       if (match[4] && match[4] !== 'N/A' && match[4] !== 'Unknown') job.eta = match[4];
 
@@ -765,13 +898,18 @@ app.post('/api/start-download', async (req, res) => {
   });
 
   proc.on('close', (code) => {
+    clearTimeout(jobKillTimer);
     const files = fs.readdirSync(TEMP_DIR).filter(
       f => f.startsWith(jobId) && !f.endsWith('.part') && !f.endsWith('.ytdl') && !f.endsWith('.temp.mp4')
     );
 
     if (code !== 0 || files.length === 0) {
       job.status = 'error';
-      job.error = stderr.trim() || 'Failed to download YouTube media. Please try another quality option.';
+      const errLines = stderr
+        .split(/\r?\n/)
+        .map(l => l.trim())
+        .filter(l => l.startsWith('ERROR:'));
+      job.error = errLines[0] || 'Failed to download YouTube media. Please try another quality option.';
       return;
     }
 
