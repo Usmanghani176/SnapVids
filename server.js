@@ -220,70 +220,37 @@ async function fetchCloudYouTubeInfo(url) {
   const aSize48 = Math.round((48 * 1000 / 8) * dur);
   const mp3Size = Math.round((140 * 1000 / 8) * dur);
 
-  const bitrates = [
-    { h: 1080, kbps: 2350, tag: 'FHD', badge: 'Needs processing' },
-    { h: 720,  kbps: 850,  tag: 'HD',  badge: 'HD' },
-    { h: 480,  kbps: 450,  tag: 'SD',  badge: 'Needs processing' },
-    { h: 360,  kbps: 280,  tag: 'SD',  badge: 'SD' },
-    { h: 240,  kbps: 150,  tag: 'SD',  badge: 'Needs processing' },
-    { h: 144,  kbps: 70,   tag: 'SD',  badge: 'Needs processing' }
-  ];
-
+  // Only offer formats the cloud extractor can actually deliver (one combined MP4 + one audio file).
+  // Advertising 1080p here would send the user into yt-dlp again, which is exactly what just failed.
   const options = [];
-  for (const b of bitrates) {
-    const vSize = Math.round((b.kbps * 1000 / 8) * dur);
+  if (yt.mp4) {
     options.push({
-      id: `height_${b.h}`,
+      id: 'cloud_mp4',
       group: 'video',
-      label: `${b.h}p · MP4`,
-      quality: `${b.h}p`,
-      resolutionTag: b.tag,
+      label: 'MP4 · Best available',
+      quality: 'MP4',
+      resolutionTag: 'Direct',
       ext: 'mp4',
       type: 'video',
-      filesize: vSize + aSize128,
-      badge: b.badge,
-      directUrl: (b.h === 360 || b.h === 720) ? yt.mp4 : null
+      filesize: Math.round((850 * 1000 / 8) * dur) + aSize128,
+      badge: 'Direct',
+      directUrl: yt.mp4
     });
   }
-
-  options.push(
-    {
-      id: 'audio_m4a_128',
+  if (yt.mp3) {
+    options.push({
+      id: 'cloud_audio',
       group: 'audio',
-      label: 'M4A · 128 kbps',
-      quality: '128 kbps',
-      resolutionTag: 'M4A',
-      ext: 'm4a',
-      type: 'audio',
-      filesize: aSize128,
-      badge: 'Audio',
-      directUrl: yt.mp3 || null
-    },
-    {
-      id: 'audio_m4a_48',
-      group: 'audio',
-      label: 'M4A · 48 kbps',
-      quality: '48 kbps',
-      resolutionTag: 'M4A',
-      ext: 'm4a',
-      type: 'audio',
-      filesize: aSize48,
-      badge: 'Audio',
-      directUrl: yt.mp3 || null
-    },
-    {
-      id: 'best_audio',
-      group: 'audio',
-      label: 'MP3 · VBR',
-      quality: 'VBR',
+      label: 'MP3 · Audio',
+      quality: 'Audio',
       resolutionTag: 'MP3',
       ext: 'mp3',
       type: 'audio',
       filesize: mp3Size,
       badge: 'Audio',
-      directUrl: yt.mp3 || null
-    }
-  );
+      directUrl: yt.mp3
+    });
+  }
 
   return {
     title: yt.title || 'YouTube Video',
@@ -352,7 +319,7 @@ function runYtDlpJson(url) {
       try {
         const info = JSON.parse(stdout);
         if (!info || typeof info !== 'object') {
-          return reject(new Error('Invalid YouTube video information received.'));
+          return reject(new Error('YouTube blocked this request from the server. Please try again, or pick the "Best available" option.'));
         }
         resolve(info);
       } catch {
@@ -951,9 +918,9 @@ app.post('/api/prepare-download', async (req, res) => {
     });
   }
 
-  // If direct external CDN URL is provided (cloud serverless fallback)
-  if (IS_VERCEL && directUrl) {
-    const ext = format && format.includes('audio') ? 'm4a' : 'mp4';
+  // If a direct external CDN URL is provided (cloud fallback), stream it via the proxy
+  if (directUrl) {
+    const ext = format === 'cloud_audio' ? 'mp3' : (format && format.includes('audio') ? 'm4a' : 'mp4');
     return res.json({
       ticketId: null,
       mode: 'direct',
